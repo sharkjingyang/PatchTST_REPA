@@ -44,37 +44,38 @@ class Model(nn.Module):
         
         decomposition = configs.decomposition
         kernel_size = configs.kernel_size
-        
-        
+        encoder_depth = configs.encoder_depth
+
+
         # model
         self.decomposition = decomposition
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
-            self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
+            self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
-            self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
+            self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
         else:
-            self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride, 
+            self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var, 
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
     
     
     def forward(self, x):           # x: [Batch, Input length, Channel]
@@ -85,8 +86,10 @@ class Model(nn.Module):
             trend = self.model_trend(trend_init)
             x = res + trend
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
+            return x, x  # Return same output for both when using decomposition
         else:
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
-            x = self.model(x)
-            x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
-        return x
+            output, zs = self.model(x)  # output: final output, zs: intermediate output
+            output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
+            zs = zs.permute(0,2,1)          # zs: [Batch, Input length, Channel]
+            return output, zs
