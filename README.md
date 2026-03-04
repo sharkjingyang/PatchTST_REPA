@@ -49,8 +49,6 @@ Our PatchTST consistently <ins>reduces the MSE scores as the look-back window in
 
 ## Getting Started
 
-We seperate our codes for supervised learning and self-supervised learning into 2 folders: ```PatchTST_supervised``` and ```PatchTST_self_supervised```. Please choose the one that you want to work with.
-
 ### Supervised Learning
 
 1. Install requirements. ```pip install -r requirements.txt```
@@ -63,21 +61,6 @@ sh ./scripts/PatchTST/weather.sh
 ```
 
 You can adjust the hyperparameters based on your needs (e.g. different patch length, different look-back windows and prediction lengths.). We also provide codes for the baseline models.
-
-### Self-supervised Learning
-
-1. Follow the first 2 steps above
-
-2. Pre-training: The scirpt patchtst_pretrain.py is to train the PatchTST/64. To run the code with a single GPU on ettm1, just run the following command
-```
-python patchtst_pretrain.py --dset ettm1 --mask_ratio 0.4
-```
-The model will be saved to the saved_model folder for the downstream tasks. There are several other parameters can be set in the patchtst_pretrain.py script.
- 
- 3. Fine-tuning: The script patchtst_finetune.py is for fine-tuning step. Either linear_probing or fine-tune the entire network can be applied.
-```
-python patchtst_finetune.py --dset ettm1 --pretrained_model <model_name>
-```
 
 ## Acknowledgement
 

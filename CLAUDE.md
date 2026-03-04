@@ -12,7 +12,6 @@ The repository contains the supervised learning implementation for forecasting.
 
 ### Installation
 ```bash
-cd PatchTST_supervised
 pip install -r requirements.txt
 ```
 
@@ -21,7 +20,6 @@ Download datasets from [Autoformer](https://drive.google.com/drive/folders/1ZOYp
 
 ### Running Supervised Training
 ```bash
-# From PatchTST_supervised directory
 python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
@@ -80,27 +78,25 @@ Input (Batch, Input Length, Channels)
 
 ```
 PatchTST/
-├── PatchTST_supervised/        # Supervised learning
-│   ├── run_longExp.py          # Main entry point
-│   ├── layers/
-│   │   ├── PatchTST_backbone.py
-│   │   ├── PatchTST_layers.py
-│   │   ├── RevIN.py
-│   │   └── SelfAttention_Family.py
-│   ├── models/
-│   │   └── PatchTST.py
-│   ├── exp/                    # Experiment classes
-│   ├── data_provider/          # Data loading
-│   ├── scripts/PatchTST/       # Training scripts
-│   └── Formers/                # Baseline models (Informer, Autoformer, etc.)
-│
-└── dataset/                     # Place downloaded CSV files here
+├── run_longExp.py              # Main entry point
+├── layers/
+│   ├── PatchTST_backbone.py
+│   ├── PatchTST_layers.py
+│   ├── RevIN.py
+│   └── SelfAttention_Family.py
+├── models/
+│   └── PatchTST.py
+├── exp/                        # Experiment classes
+├── data_provider/              # Data loading
+├── scripts/PatchTST/            # Training scripts
+├── Formers/                    # Baseline models (Informer, Autoformer, etc.)
+├── utils/                      # Utilities
+├── dataset/                    # Place downloaded CSV files here
+├── README.md
+├── CLAUDE.md
+└── LICENSE
 ```
 
 ## Datasets
 
 Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, weather, illness, exchange_rate, ili (download from Autoformer drive).
-
-## Modifications Record
-
-See `PatchTST_supervised/MODIFICATIONS.md` for a record of code modifications and Q&A exchanges.

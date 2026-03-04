@@ -4,7 +4,9 @@
       "Bash(gh repo create:*)",
       "Bash(git remote add:*)",
       "Bash(git remote remove:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m:*)",
+      "Bash(git push -u repa main)"
     ]
   }
 }
