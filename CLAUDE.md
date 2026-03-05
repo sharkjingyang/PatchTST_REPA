@@ -34,7 +34,7 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --projector_dim 768 --lambda_contrastive 0.5 \
+  --projector_dim 768 --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with TiViT-extracted features.
@@ -75,7 +75,7 @@ Input (Batch, Input Length, Channels)
 **Model Output**: The model returns a tuple `(output, zs, zs_tilde)` where:
 - `output`: Final prediction output
 - `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 2), after MLP projector if enabled
-- `zs_tilde`: TiViT-extracted features from target sequence (only when `use_projector=1`)
+- `zs_tilde`: TiViT-extracted features from target sequence (returned when `return_projector=True`)
 
 ### TiViT Feature Alignment
 
@@ -105,9 +105,10 @@ The system combines PatchTST with TiViT for enhanced feature representation:
 - `decomposition`: Enable series decomposition
 - `save_checkpoint`: Whether to save model checkpoint (1: save, 0: not save, default: 0)
 - `projector_dim`: MLP projector output dimension (default: 768)
-- `use_projector`: Use MLP projector for zs (1: use, 0: not use)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
 - `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
+
+Note: Projector and TiViT are always created. Use `return_projector=True` in training to compute contrastive loss (vali/test will skip TiViT inference for speed).
 
 ## Directory Structure
 

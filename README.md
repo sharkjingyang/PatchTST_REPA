@@ -51,7 +51,7 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --projector_dim 768 --lambda_contrastive 0.5
+  --projector_dim 768 --lambda_contrastive 0.5
 ```
 
 ## Architecture
@@ -88,13 +88,14 @@ The model returns a tuple `(output, zs)`:
 | `n_heads` | Number of attention heads | 16 |
 | `e_layers` | Number of encoder layers | 4 |
 | `encoder_depth` | Which encoder layer to extract intermediate output | 2 |
-| `use_projector` | Use MLP projector (1: use, 0: not use) | 0 |
 | `projector_dim` | MLP projector output dimension | 768 |
 | `lambda_contrastive` | Weight for contrastive loss | 0.5 |
 
+Note: Projector and TiViT are always created. Training uses `return_projector=True` to compute contrastive loss.
+
 ## TiViT Feature Alignment
 
-When `use_projector=1`, the training uses a combined loss:
+The training uses a combined loss:
 
 ```
 loss = MSE_loss + lambda_contrastive * contrastive_loss
