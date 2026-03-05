@@ -25,6 +25,43 @@ class Exp_Main(Exp_Basic):
         super(Exp_Main, self).__init__(args)
         # TiViT is now created inside PatchTST model
 
+    def _print_parameter_stats(self):
+        """Print parameter statistics at the start of training"""
+        print("\n" + "=" * 60)
+        print("Parameter Statistics:")
+        print("=" * 60)
+
+        model = self.model
+
+        # Get TiViT params
+        tivit_total = 0
+        if hasattr(model, 'tivit') and model.tivit is not None:
+            tivit_total = sum(p.numel() for p in model.tivit.parameters())
+
+        # Total model params
+        all_total = sum(p.numel() for p in model.parameters())
+        all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+        # Exclude TiViT from total
+        total = all_total - tivit_total
+
+        print(f"Total parameters (excl. TiViT): {total:,}")
+        print(f"Trainable parameters:            {all_trainable:,}")
+
+        # Projector params
+        if hasattr(model, 'model') and hasattr(model.model, 'projector'):
+            proj_total = sum(p.numel() for p in model.model.projector.parameters())
+            print(f"\nProjector parameters: {proj_total:,}")
+        elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
+            proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
+            print(f"\nProjector parameters (2): {proj_total:,}")
+
+        # TiViT params
+        if tivit_total > 0:
+            print(f"\nTiViT parameters (frozen, excluded): {tivit_total:,}")
+
+        print("=" * 60)
+
     def _build_model(self):
         model_dict = {
             'Autoformer': Autoformer,
@@ -126,6 +163,9 @@ class Exp_Main(Exp_Basic):
         return total_loss
 
     def train(self, setting):
+        # Print parameter statistics
+        self._print_parameter_stats()
+
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
