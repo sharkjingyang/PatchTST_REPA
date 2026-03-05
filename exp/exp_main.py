@@ -3,12 +3,14 @@ from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
+from layers.Tivit import get_tivit, get_patch_size
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
-from torch.optim import lr_scheduler 
+from torch.optim import lr_scheduler
 
 import os
 import time
@@ -22,6 +24,32 @@ warnings.filterwarnings('ignore')
 class Exp_Main(Exp_Basic):
     def __init__(self, args):
         super(Exp_Main, self).__init__(args)
+        # 默认创建 TiViT 模型
+        self.tivit = self._build_tivit()
+
+    def _build_tivit(self):
+        """Build TiViT model for feature extraction"""
+        from layers.Tivit import get_tivit, get_patch_size
+
+        model_name = getattr(self.args, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
+        model_layer = getattr(self.args, 'tivit_layer', 6)
+        aggregation = getattr(self.args, 'tivit_aggregation', 'mean')
+        stride = getattr(self.args, 'tivit_stride', 0.1)
+        patch_size = getattr(self.args, 'tivit_patch_size', 'sqrt')
+
+        # 计算实际 patch_size
+        actual_patch_size = get_patch_size(patch_size, self.args.seq_len)
+
+        tivit = get_tivit(
+            model_name=model_name,
+            model_layer=model_layer,
+            aggregation=aggregation,
+            stride=stride,
+            patch_size=actual_patch_size,
+            device=self.device,
+        )
+        tivit.eval()
+        return tivit
 
     def _build_model(self):
         model_dict = {
@@ -48,8 +76,34 @@ class Exp_Main(Exp_Basic):
         return model_optim
 
     def _select_criterion(self):
+        # MSE loss for prediction
         criterion = nn.MSELoss()
         return criterion
+
+    def _compute_contrastive_loss(self, zs_project, zs_tilde):
+        """
+        Compute contrastive loss between projected features and TiViT features.
+        对每个 nvar 单独计算 cosine similarity，然后求和。
+
+        Args:
+            zs_project: (bs, nvars, d_model) or (bs, nvars, projector_dim) - PatchTST projected features
+            zs_tilde: (bs, nvars, d_vit) - TiViT features
+
+        Returns:
+            loss: scalar contrastive loss
+        """
+        # Normalize features
+        zs_project = F.normalize(zs_project, dim=-1)
+        zs_tilde = F.normalize(zs_tilde, dim=-1)
+
+        # Compute cosine similarity per nvar (each nvar separately)
+        # Shape: (bs, nvars)
+        similarity = (zs_project * zs_tilde).sum(dim=-1)
+
+        # Sum over all (batch_size * nvars), then normalize by total count
+        loss = -similarity.sum() / similarity.numel()
+
+        return loss
 
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
@@ -166,7 +220,8 @@ class Exp_Main(Exp_Basic):
                         train_loss.append(loss.item())
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                            outputs, zs_project = self.model(batch_x)  # Get final output + projected features
+                            zs_tilde = self.tivit(batch_y)  # TiViT features from target sequence
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -176,8 +231,18 @@ class Exp_Main(Exp_Basic):
                     # print(outputs.shape,batch_y.shape)
                     f_dim = -1 if self.args.features == 'MS' else 0
                     outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                    loss = criterion(outputs, batch_y)
+                    batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
+                    # MSE loss for prediction
+                    mse_loss = criterion(outputs, batch_y_pred)
+
+                    # Contrastive loss for feature alignment
+                    lambda_loss = self.args.lambda_contrastive
+                    contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
+
+                    # Combined loss: MSE + lambda * contrastive
+                    loss = mse_loss + lambda_loss * contrastive_loss
+
                     train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -355,7 +420,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)
+                            outputs = self.model(batch_x)[0]
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]

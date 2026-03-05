@@ -1,12 +1,15 @@
 from abc import ABC, abstractmethod
 
 import einops
+import math
+import numpy as np
 import open_clip
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
 from torchvision.transforms import Resize
+from tqdm import tqdm
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -17,39 +20,25 @@ from transformers import (
 )
 
 
+def get_device():
+    """自动检测可用设备，有GPU则用GPU，否则用CPU"""
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
 def get_processor_vit(model_name):
     model_name = model_name.lower()
     if model_name == "laion/CLIP-ViT-B-16-laion2B-s34B-b88K".lower():
+        # 使用 pretrained tag 自动下载模型
+        # 如需本地模型，改为本地路径，如 "./open_clip_ViT/open_clip_model.safetensors"
         model, _, processor = open_clip.create_model_and_transforms(
-            model_name="ViT-B-16", pretrained="laion2b_s34b_b88k"
+            model_name="ViT-B-16",
+            pretrained="../open_clip/open_clip_model.safetensors"
         )
         vit = model.visual
     else:
         raise ValueError(f"Unsupported model {model_name}.")
-
     return processor, vit
 
-
-def get_tivit(
-    model_name,
-    model_layer,
-    aggregation,
-    stride,
-    patch_size,
-):
-    processor, vit = get_processor_vit(model_name)
-    TiViTClass = TiViT_OpenCLIP
-
-    tivit = TiViTClass(
-        processor=processor,
-        vit=vit,
-        layer_idx=model_layer,
-        aggregation=aggregation,
-        patch_size=patch_size,
-        stride=stride,
-    )
-
-    return tivit
 
 
 class BaseTiViT(nn.Module, ABC):
@@ -182,3 +171,211 @@ class TiViT_OpenCLIP(BaseTiViT):
             return x
         else:
             return torch.stack(hidden_states, dim=-1)
+
+def get_patch_size(patch_size, T):
+    """
+    Calculate patch size based on time series length.
+
+    Args:
+        patch_size: 'sqrt', 'linspace', or an integer
+        T: time series length
+
+    Returns:
+        patch_size: integer or list of integers
+    """
+    if patch_size == "sqrt":
+        return int(math.sqrt(T))
+    elif patch_size == "linspace":
+        return (
+            np.linspace(1,
+                        math.ceil(T // 2),
+                        min(math.ceil(T // 2), 20),
+                        ).astype(int)
+            .tolist()
+        )
+    return patch_size
+
+
+def embed(model, dataloaders, channels, device):
+    """
+    Extract embeddings from time series data using TiViT model.
+
+    Args:
+        model: TiViT model
+        dataloader: DataLoader yielding batches of shape (B, C, T)
+        channels: number of channels
+        device: device to run on
+
+    Returns:
+        embeds: torch.Tensor of shape (B, C, D) - normalized embeddings
+    """
+    batch_embeds = []
+    for (batch,) in tqdm(dataloaders, desc="Extracting embeddings"):
+        batch_embeds_dim = []
+        for dim in range(channels):
+            batch_dim = batch[:, dim, :].unsqueeze(-1)  # (B, T, 1)
+            with torch.no_grad():
+                batch_dim = batch_dim.to(device)
+                outputs = model(batch_dim)  # (B, D)
+            batch_embeds_dim.append(outputs)
+        # 按channel维度拼接: list of (B, D) -> (B, C, D)
+        batch_embeds.append(torch.stack(batch_embeds_dim, dim=1))
+
+    # 拼接所有batch: (N, C, D)
+    embeds = torch.cat(batch_embeds, dim=0)
+
+    # L2 normalization
+    embeds = F.normalize(embeds, p=2, dim=-1)
+
+    return embeds       
+
+def get_tivit(
+    model_name,
+    model_layer,
+    aggregation,
+    stride,
+    patch_size,
+    device=None,
+):
+    """创建TiViT模型并移动到指定设备
+
+    Args:
+        model_name: CLIP模型名称
+        model_layer: 提取的ViT层索引
+        aggregation: 池化方式 ('mean' 或 'cls_token')
+        stride: patch stride
+        patch_size: patch大小
+        device: 设备，默认为自动检测
+
+    Returns:
+        tivit: TiViT模型
+    """
+    if device is None:
+        device = get_device()
+
+    processor, vit = get_processor_vit(model_name)
+    TiViTClass = TiViT_OpenCLIP
+
+    tivit = TiViTClass(
+        processor=processor,
+        vit=vit,
+        layer_idx=model_layer,
+        aggregation=aggregation,
+        patch_size=patch_size,
+        stride=stride,
+    )
+    tivit = tivit.to(device)
+
+    return tivit
+
+def get_TS_Tivit_embed(Tivit_model, train_loader, channels, device=None):
+    """提取时间序列的TiViT嵌入向量
+
+    Args:
+        Tivit_model: TiViT模型
+        train_loader: 数据加载器
+        channels: 通道数
+        device: 设备，默认为自动检测
+
+    Returns:
+        vision_embeds: torch.Tensor of shape (N, C, D)
+    """
+    if device is None:
+        device = get_device()
+
+    vision_embeds = embed(Tivit_model, train_loader, channels, device)
+    return vision_embeds
+
+
+if __name__ == "__main__":
+    from torch.utils.data import DataLoader, TensorDataset
+
+    print("=" * 50)
+    print("Testing TiViT")
+    print("=" * 50)
+
+    # 1. 测试 get_device
+    print("\n[1] Testing get_device...")
+    test_device = get_device()
+    print(f"    Device: {test_device}")
+
+    # 参数设置
+    model_name = "laion/CLIP-ViT-B-16-laion2B-s34B-b88K"
+    model_layer = 6
+    aggregation = "mean"
+    stride = 0.1
+    patch_size = "sqrt"
+    seq_len = 96
+
+    # 计算实际 patch_size
+    actual_patch_size = get_patch_size(patch_size, seq_len)
+
+    # 2. 创建TiViT模型
+    print("\n[2] Loading TiViT model...")
+    print(f"    model_name: {model_name}")
+    print(f"    model_layer: {model_layer}")
+    print(f"    aggregation: {aggregation}")
+    print(f"    patch_size: {patch_size} -> {actual_patch_size}")
+    print(f"    stride: {stride}")
+
+    # 由于本地可能没有GPU，使用CPU
+    use_cpu = True  # 改为False如果有GPU
+    device = torch.device("cpu") if use_cpu else get_device()
+    print(f"    device: {device}")
+
+    try:
+        tivit = get_tivit(
+            model_name=model_name,
+            model_layer=model_layer,
+            aggregation=aggregation,
+            stride=stride,
+            patch_size=actual_patch_size,  # 使用转换后的实际值
+            device=device,
+        )
+        tivit.eval()
+        print("    Model loaded successfully!")
+    except Exception as e:
+        print(f"    Failed to load model: {e}")
+        print("    (可能是首次运行需要下载模型，或本地模型路径错误)")
+        exit(1)
+
+    # 3. 测试单样本前向传播
+    print("\n[3] Testing forward pass (single sample)...")
+    batch_size = 2
+    features = 1
+
+    # 输入shape: (B, T, D) - 注意TiViT期望的是 (B, T, D)
+    x = torch.randn(batch_size, seq_len, features)
+    print(f"    Input shape: {x.shape}")
+
+    with torch.no_grad():
+        output = tivit(x)
+
+    print(f"    Output shape: {output.shape}")
+    print(f"    Output dtype: {output.dtype}")
+    print(f"    Output device: {output.device}")
+
+    # 4. 测试 embed 函数 (使用DataLoader) - 正确处理多通道
+    print("\n[6] Testing embed function with DataLoader...")
+
+    # 创建模拟数据
+    n_samples = 10
+    channels = 7
+    fake_data = torch.randn(n_samples, channels, seq_len)
+    fake_dataset = TensorDataset(fake_data)
+    fake_loader = DataLoader(fake_dataset, batch_size=2, shuffle=False)
+
+    # 直接用tivit模型
+    embeds = embed(tivit, fake_loader, channels, device)
+    print(f"    Embeddings shape: {embeds.shape}")
+    print(f"    Expected: ({n_samples}, {channels}, 512)")
+    print(f"    Is normalized: {torch.allclose(embeds.norm(p=2, dim=-1), torch.ones_like(embeds.norm(p=2, dim=-1)), atol=1e-5)}")
+
+    # 5. 测试 get_TS_Tivit_embed
+    print("\n[7] Testing get_TS_Tivit_embed...")
+    embeds2 = get_TS_Tivit_embed(tivit, fake_loader, channels, device=device)
+    print(f"    Embeddings shape: {embeds2.shape}")
+
+    print("\n" + "=" * 50)
+    print("All tests passed!")
+    print("=" * 50)

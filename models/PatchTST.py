@@ -45,10 +45,12 @@ class Model(nn.Module):
         decomposition = configs.decomposition
         kernel_size = configs.kernel_size
         encoder_depth = configs.encoder_depth
-
+        projector_dim = getattr(configs, 'projector_dim', 768)
+        use_projector = getattr(configs, 'use_projector', False)
 
         # model
         self.decomposition = decomposition
+        self.use_projector = use_projector
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
             self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -58,7 +60,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
             self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -66,16 +68,16 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
         else:
             self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
                                   dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
+                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
     
     
     def forward(self, x):           # x: [Batch, Input length, Channel]
@@ -89,7 +91,7 @@ class Model(nn.Module):
             return x, x  # Return same output for both when using decomposition
         else:
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
-            output, zs = self.model(x)  # output: final output, zs: intermediate output
+            output, zs = self.model(x)  # always returns (output, zs)
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
-            zs = zs.permute(0,2,1)          # zs: [Batch, Input length, Channel]
+            zs = zs.permute(0,2,1)          # zs: [Batch, Channel, d_model]
             return output, zs

@@ -12,6 +12,15 @@ import numpy as np
 from layers.PatchTST_layers import *
 from layers.RevIN import RevIN
 
+def build_mlp(input_dim, hidden_dim, output_dim):
+    """Build a simple MLP with one hidden layer"""
+    return nn.Sequential(
+        nn.Linear(input_dim, hidden_dim),
+        nn.GELU(),
+        nn.Linear(hidden_dim, output_dim)
+    )
+
+
 # Cell
 class PatchTST_backbone(nn.Module):
     def __init__(self, c_in:int, context_window:int, target_window:int, patch_len:int, stride:int, max_seq_len:Optional[int]=1024,
@@ -20,7 +29,7 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, verbose:bool=False, **kwargs):
+                 encoder_depth: int = 2, projector_dim: int = 768, use_projector: bool = False, verbose:bool=False, **kwargs):
         
         super().__init__()
         
@@ -51,11 +60,20 @@ class PatchTST_backbone(nn.Module):
         self.pretrain_head = pretrain_head
         self.head_type = head_type
         self.individual = individual
+        self.target_window = target_window
 
-        if self.pretrain_head: 
+        if self.pretrain_head:
             self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout) # custom head passed as a partial func with all its kwargs
-        elif head_type == 'flatten': 
+        elif head_type == 'flatten':
             self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
+
+        # MLP Projector for aligning zs with TiViT features
+        self.use_projector = use_projector
+        self.projector_dim = projector_dim
+        if self.use_projector:
+            # zs shape: [bs, nvars, d_model, patch_num]
+            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
+            self.projector = build_mlp(d_model, projector_dim // 2, projector_dim)
         
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
@@ -74,8 +92,17 @@ class PatchTST_backbone(nn.Module):
         # model - always return both output and intermediate
         z, zs = self.backbone(z)                                                            # z: [bs x nvars x d_model x patch_num], zs: intermediate output
 
+        # Apply MLP projector to zs before head (for TiViT alignment)
+        if self.use_projector:
+            # zs: [bs x nvars x d_model x patch_num]
+            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
+            bs, nvars, d_model, patch_num = zs.shape
+            zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
+            zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
+            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
+            zs_projected = zs_projected.mean(dim=2)                                        # [bs x nvars x projector_dim] - mean pooling over patches
+
         output = self.head(z)                                                               # z: [bs x nvars x target_window]
-        zs = self.head(zs)                                                                  # zs: [bs x nvars x target_window]
 
         # denorm
         if self.revin:
@@ -83,11 +110,10 @@ class PatchTST_backbone(nn.Module):
             output = self.revin_layer(output, 'denorm')
             output = output.permute(0,2,1)
 
-            zs = zs.permute(0,2,1)
-            zs = self.revin_layer(zs, 'denorm')
-            zs = zs.permute(0,2,1)
-
-        return output, zs
+        if self.use_projector:
+            return output, zs_projected
+        else:
+            return output, zs
     
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout),
