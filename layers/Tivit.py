@@ -25,13 +25,14 @@ def get_device():
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def get_processor_vit(model_name):
+def get_processor_vit(model_name, pretrained=None):
     model_name = model_name.lower()
     if model_name == "laion/CLIP-ViT-B-16-laion2B-s34B-b88K".lower():
-        # 使用本地模型路径
+        # 使用传入的 pretrained 路径，或默认本地模型路径
+        pretrained_path = pretrained if pretrained else "./open_clip/open_clip_model.safetensors"
         model, _, processor = open_clip.create_model_and_transforms(
             model_name="ViT-B-16",
-            pretrained="./open_clip/open_clip_model.safetensors"
+            pretrained=pretrained_path
         )
         vit = model.visual
     else:
@@ -235,6 +236,7 @@ def get_tivit(
     stride,
     patch_size,
     device=None,
+    pretrained=None,
 ):
     """创建TiViT模型并移动到指定设备
 
@@ -245,6 +247,7 @@ def get_tivit(
         stride: patch stride
         patch_size: patch大小
         device: 设备，默认为自动检测
+        pretrained: 预训练模型路径
 
     Returns:
         tivit: TiViT模型
@@ -252,7 +255,7 @@ def get_tivit(
     if device is None:
         device = get_device()
 
-    processor, vit = get_processor_vit(model_name)
+    processor, vit = get_processor_vit(model_name, pretrained)
     TiViTClass = TiViT_OpenCLIP
 
     tivit = TiViTClass(

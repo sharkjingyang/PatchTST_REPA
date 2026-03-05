@@ -43,4 +43,5 @@ python -u run_longExp.py \
   --save_checkpoint 0 \
   --use_projector 1 \
   --projector_dim 768 \
-  --lambda_contrastive 0.5
+  --lambda_contrastive 0.5 \
+  --tivit_pretrained ./open_clip/open_clip_model.safetensors

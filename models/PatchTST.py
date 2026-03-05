@@ -56,6 +56,7 @@ class Model(nn.Module):
         self.tivit_aggregation = getattr(configs, 'tivit_aggregation', 'mean')
         self.tivit_stride = getattr(configs, 'tivit_stride', 0.1)
         self.tivit_patch_size = getattr(configs, 'tivit_patch_size', 'sqrt')
+        self.tivit_pretrained = getattr(configs, 'tivit_pretrained', './open_clip/open_clip_model.safetensors')
 
         # Build TiViT if using projector
         self.tivit = None
@@ -70,6 +71,7 @@ class Model(nn.Module):
                 stride=self.tivit_stride,
                 patch_size=actual_patch_size,
                 device='cuda' if torch.cuda.is_available() else 'cpu',
+                pretrained=self.tivit_pretrained,
             )
             self.tivit.eval()
 
