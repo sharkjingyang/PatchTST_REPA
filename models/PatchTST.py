@@ -47,10 +47,8 @@ class Model(nn.Module):
         kernel_size = configs.kernel_size
         encoder_depth = configs.encoder_depth
         projector_dim = getattr(configs, 'projector_dim', 768)
-        use_projector = getattr(configs, 'use_projector', False)
 
         # TiViT parameters
-        self.use_projector = use_projector
         self.tivit_model_name = getattr(configs, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
         self.tivit_layer = getattr(configs, 'tivit_layer', 6)
         self.tivit_aggregation = getattr(configs, 'tivit_aggregation', 'mean')
@@ -58,25 +56,23 @@ class Model(nn.Module):
         self.tivit_patch_size = getattr(configs, 'tivit_patch_size', 'sqrt')
         self.tivit_pretrained = getattr(configs, 'tivit_pretrained', './open_clip/open_clip_model.safetensors')
 
-        # Build TiViT if using projector
-        self.tivit = None
-        if self.use_projector:
-            # Use context_window + target_window for TiViT (full sequence length)
-            full_seq_len = context_window + target_window
-            actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
-            self.tivit = get_tivit(
-                model_name=self.tivit_model_name,
-                model_layer=self.tivit_layer,
-                aggregation=self.tivit_aggregation,
-                stride=self.tivit_stride,
-                patch_size=actual_patch_size,
-                device='cuda' if torch.cuda.is_available() else 'cpu',
-                pretrained=self.tivit_pretrained,
-            )
-            self.tivit.eval()
-            # Freeze TiViT parameters
-            for param in self.tivit.parameters():
-                param.requires_grad = False
+        # Build TiViT (always created for TiViT feature alignment)
+        # Use context_window + target_window for TiViT (full sequence length)
+        full_seq_len = context_window + target_window
+        actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
+        self.tivit = get_tivit(
+            model_name=self.tivit_model_name,
+            model_layer=self.tivit_layer,
+            aggregation=self.tivit_aggregation,
+            stride=self.tivit_stride,
+            patch_size=actual_patch_size,
+            device='cuda' if torch.cuda.is_available() else 'cpu',
+            pretrained=self.tivit_pretrained,
+        )
+        self.tivit.eval()
+        # Freeze TiViT parameters
+        for param in self.tivit.parameters():
+            param.requires_grad = False
 
         # model
         self.decomposition = decomposition
@@ -89,7 +85,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
             self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -97,7 +93,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
         else:
             self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
@@ -106,10 +102,16 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
     
     
-    def forward(self, x, target=None):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
+    def forward(self, x, target=None, return_projector=False):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
+        """
+        Args:
+            x: input sequence [Batch, Input length, Channel]
+            target: target sequence [Batch, Target length, Channel], used for TiViT feature extraction
+            return_projector: if True, return zs_project and zs_tilde for contrastive loss (training only)
+        """
         if self.decomposition:
             res_init, trend_init = self.decomp_module(x)
             res_init, trend_init = res_init.permute(0,2,1), trend_init.permute(0,2,1)  # x: [Batch, Channel, Input length]
@@ -124,9 +126,9 @@ class Model(nn.Module):
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
             # zs: keep as (bs, nvars, d_model) to match zs_tilde shape
 
-            # Extract TiViT features if using projector and target is provided
+            # Only extract TiViT features when return_projector=True (training)
             zs_tilde = None
-            if self.use_projector and self.tivit is not None and target is not None:
+            if return_projector and self.tivit is not None and target is not None:
                 with torch.no_grad():
                     # target: (bs, seq_len+pred_len, nvars) -> keep as (bs, seq_len, nvars)
                     # Process each channel separately

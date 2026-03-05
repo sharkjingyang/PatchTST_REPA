@@ -234,7 +234,7 @@ class Exp_Main(Exp_Basic):
                         train_loss.append(loss.item())
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y)  # Get final output + projected features + TiViT features
+                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y, return_projector=True)  # Get final output + projected features + TiViT features
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]

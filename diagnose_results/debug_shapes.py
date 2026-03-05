@@ -48,7 +48,7 @@ print(f"Using device: {device}")
 model = PatchTST.Model(args).float().to(device)
 model.eval()
 
-print(f"\nModel use_projector: {model.use_projector}")
+print(f"\nModel has TiViT: {model.tivit is not None}")
 
 # Create fake batch data
 batch_size = 32
@@ -61,9 +61,9 @@ print("=" * 60)
 print(f"batch_x:     {batch_x.shape}")
 print(f"batch_y:     {batch_y.shape}")
 
-# Forward pass with target (for TiViT extraction)
+# Forward pass with target (for TiViT extraction, training mode)
 with torch.no_grad():
-    outputs, zs, zs_tilde = model(batch_x, batch_y)
+    outputs, zs, zs_tilde = model(batch_x, batch_y, return_projector=True)
 
 print("\n" + "=" * 60)
 print("Output Shapes:")
