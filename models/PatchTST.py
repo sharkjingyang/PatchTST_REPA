@@ -10,6 +10,7 @@ import numpy as np
 
 from layers.PatchTST_backbone import PatchTST_backbone
 from layers.PatchTST_layers import series_decomp
+from layers.Tivit import get_tivit, get_patch_size
 
 
 class Model(nn.Module):
@@ -48,9 +49,32 @@ class Model(nn.Module):
         projector_dim = getattr(configs, 'projector_dim', 768)
         use_projector = getattr(configs, 'use_projector', False)
 
+        # TiViT parameters
+        self.use_projector = use_projector
+        self.tivit_model_name = getattr(configs, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
+        self.tivit_layer = getattr(configs, 'tivit_layer', 6)
+        self.tivit_aggregation = getattr(configs, 'tivit_aggregation', 'mean')
+        self.tivit_stride = getattr(configs, 'tivit_stride', 0.1)
+        self.tivit_patch_size = getattr(configs, 'tivit_patch_size', 'sqrt')
+
+        # Build TiViT if using projector
+        self.tivit = None
+        if self.use_projector:
+            # Use context_window + target_window for TiViT (full sequence length)
+            full_seq_len = context_window + target_window
+            actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
+            self.tivit = get_tivit(
+                model_name=self.tivit_model_name,
+                model_layer=self.tivit_layer,
+                aggregation=self.tivit_aggregation,
+                stride=self.tivit_stride,
+                patch_size=actual_patch_size,
+                device='cuda' if torch.cuda.is_available() else 'cpu',
+            )
+            self.tivit.eval()
+
         # model
         self.decomposition = decomposition
-        self.use_projector = use_projector
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
             self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -80,7 +104,7 @@ class Model(nn.Module):
                                   subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, use_projector=use_projector, verbose=verbose, **kwargs)
     
     
-    def forward(self, x):           # x: [Batch, Input length, Channel]
+    def forward(self, x, target=None):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
         if self.decomposition:
             res_init, trend_init = self.decomp_module(x)
             res_init, trend_init = res_init.permute(0,2,1), trend_init.permute(0,2,1)  # x: [Batch, Channel, Input length]
@@ -94,4 +118,19 @@ class Model(nn.Module):
             output, zs = self.model(x)  # always returns (output, zs)
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
             zs = zs.permute(0,2,1)          # zs: [Batch, Channel, d_model]
-            return output, zs
+
+            # Extract TiViT features if using projector and target is provided
+            zs_tilde = None
+            if self.use_projector and self.tivit is not None and target is not None:
+                with torch.no_grad():
+                    # target: (bs, seq_len+pred_len, nvars) -> keep as (bs, seq_len, nvars)
+                    # Process each channel separately
+                    # TiViT expects input: (bs, seq_len, 1) for single channel
+                    zs_tilde_list = []
+                    for c in range(target.shape[2]):  # target.shape[2] = nvars
+                        channel_input = target[:, :, c:c+1]  # (bs, seq_len, 1)
+                        channel_embed = self.tivit(channel_input)  # (bs, d_vit)
+                        zs_tilde_list.append(channel_embed)
+                    zs_tilde = torch.stack(zs_tilde_list, dim=1)  # (bs, nvars, d_vit)
+
+            return output, zs, zs_tilde

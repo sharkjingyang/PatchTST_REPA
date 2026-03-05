@@ -3,7 +3,6 @@ from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
-from layers.Tivit import get_tivit, get_patch_size
 
 import numpy as np
 import torch
@@ -24,32 +23,7 @@ warnings.filterwarnings('ignore')
 class Exp_Main(Exp_Basic):
     def __init__(self, args):
         super(Exp_Main, self).__init__(args)
-        # 默认创建 TiViT 模型
-        self.tivit = self._build_tivit()
-
-    def _build_tivit(self):
-        """Build TiViT model for feature extraction"""
-        from layers.Tivit import get_tivit, get_patch_size
-
-        model_name = getattr(self.args, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
-        model_layer = getattr(self.args, 'tivit_layer', 6)
-        aggregation = getattr(self.args, 'tivit_aggregation', 'mean')
-        stride = getattr(self.args, 'tivit_stride', 0.1)
-        patch_size = getattr(self.args, 'tivit_patch_size', 'sqrt')
-
-        # 计算实际 patch_size
-        actual_patch_size = get_patch_size(patch_size, self.args.seq_len)
-
-        tivit = get_tivit(
-            model_name=model_name,
-            model_layer=model_layer,
-            aggregation=aggregation,
-            stride=stride,
-            patch_size=actual_patch_size,
-            device=self.device,
-        )
-        tivit.eval()
-        return tivit
+        # TiViT is now created inside PatchTST model
 
     def _build_model(self):
         model_dict = {
@@ -123,7 +97,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                            outputs, _, _ = self.model(batch_x)  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -131,7 +105,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                        outputs, _, _ = self.model(batch_x)  # Get final output only
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -206,7 +180,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                            outputs, _, _ = self.model(batch_x, batch_y)  # Get final output
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -220,8 +194,7 @@ class Exp_Main(Exp_Basic):
                         train_loss.append(loss.item())
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, zs_project = self.model(batch_x)  # Get final output + projected features
-                            zs_tilde = self.tivit(batch_y)  # TiViT features from target sequence
+                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y)  # Get final output + projected features + TiViT features
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -329,7 +302,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                            outputs, _, _ = self.model(batch_x)  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -337,7 +310,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output, ignore intermediate
+                            outputs, _, _ = self.model(batch_x)  # Get final output only
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -420,7 +393,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]
+                            outputs, _, _ = self.model(batch_x)
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -428,7 +401,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        outputs = self.model(batch_x)
+                        outputs, _, _ = self.model(batch_x)
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]

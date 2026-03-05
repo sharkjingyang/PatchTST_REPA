@@ -40,4 +40,7 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 100\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --save_checkpoint 0
+  --save_checkpoint 0 \
+  --use_projector 1 \
+  --projector_dim 768 \
+  --lambda_contrastive 0.5

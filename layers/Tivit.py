@@ -28,11 +28,10 @@ def get_device():
 def get_processor_vit(model_name):
     model_name = model_name.lower()
     if model_name == "laion/CLIP-ViT-B-16-laion2B-s34B-b88K".lower():
-        # 使用 pretrained tag 自动下载模型
-        # 如需本地模型，改为本地路径，如 "./open_clip_ViT/open_clip_model.safetensors"
+        # 使用本地模型路径
         model, _, processor = open_clip.create_model_and_transforms(
             model_name="ViT-B-16",
-            pretrained="../open_clip/open_clip_model.safetensors"
+            pretrained="./open_clip/open_clip_model.safetensors"
         )
         vit = model.visual
     else:
