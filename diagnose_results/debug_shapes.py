@@ -101,7 +101,7 @@ print(f"\ncontrastive_loss: {contrastive_loss.item():.6f}")
 
 # MSE loss
 criterion = torch.nn.MSELoss()
-f_dim = -1  # features='M'
+f_dim = 0  # features='M' - take all channels
 batch_y_pred = batch_y[:, -args.pred_len:, f_dim:].to(device)  # (32, 96, 7)
 outputs_pred = outputs[:, -args.pred_len:, :]  # (32, 96, 7)
 
