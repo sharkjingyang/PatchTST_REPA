@@ -74,6 +74,9 @@ class Model(nn.Module):
                 pretrained=self.tivit_pretrained,
             )
             self.tivit.eval()
+            # Freeze TiViT parameters
+            for param in self.tivit.parameters():
+                param.requires_grad = False
 
         # model
         self.decomposition = decomposition
@@ -119,7 +122,7 @@ class Model(nn.Module):
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
             output, zs = self.model(x)  # always returns (output, zs)
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
-            zs = zs.permute(0,2,1)          # zs: [Batch, Channel, d_model]
+            # zs: keep as (bs, nvars, d_model) to match zs_tilde shape
 
             # Extract TiViT features if using projector and target is provided
             zs_tilde = None

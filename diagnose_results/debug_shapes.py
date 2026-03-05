@@ -77,13 +77,11 @@ print("\n" + "=" * 60)
 print("Contrastive Loss Computation:")
 print("=" * 60)
 
-# zs shape: (bs, projector_dim, nvars) -> need to permute to (bs, nvars, projector_dim)
-# zs_tilde shape: (bs, nvars, d_vit) -> (32, 7, 768)
+# zs and zs_tilde are now both (bs, nvars, d) - no permute needed
+# zs shape: (bs, nvars, d)
+# zs_tilde shape: (bs, nvars, d_vit)
 
-# Permute zs to match zs_tilde: (bs, d, nvars) -> (bs, nvars, d)
-zs = zs.permute(0, 2, 1)  # (32, 7, 768)
-
-print(f"zs shape (after permute): {zs.shape}")
+print(f"zs shape: {zs.shape}")
 print(f"zs_tilde shape:           {zs_tilde.shape}")
 
 # Normalize features
@@ -115,6 +113,68 @@ lambda_contrastive = 0.5
 total_loss = mse_loss + lambda_contrastive * contrastive_loss
 print(f"\nlambda_contrastive: {lambda_contrastive}")
 print(f"total_loss (MSE + lambda * contrastive): {total_loss.item():.6f}")
+
+# Parameter statistics
+print("\n" + "=" * 60)
+print("Parameter Statistics:")
+print("=" * 60)
+
+def count_parameters(model):
+    """Count trainable and non-trainable parameters"""
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    non_trainable = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    total = trainable + non_trainable
+    return trainable, non_trainable, total
+
+# Total model parameters (excluding TiViT)
+# Calculate all params, then subtract TiViT params
+all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+all_non_trainable = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+all_total = all_trainable + all_non_trainable
+
+# Get TiViT params
+tivit_total = 0
+tivit_non_trainable = 0
+if hasattr(model, 'tivit') and model.tivit is not None:
+    tivit_total = sum(p.numel() for p in model.tivit.parameters())
+    tivit_non_trainable = sum(p.numel() for p in model.tivit.parameters() if not p.requires_grad)
+
+# Exclude TiViT from total
+total = all_total - tivit_total
+trainable = all_trainable  # TiViT is non-trainable
+non_trainable = all_non_trainable - tivit_non_trainable
+
+print(f"Total parameters (excl. TiViT): {total:,}")
+print(f"Trainable parameters:            {trainable:,}")
+print(f"Non-trainable parameters:        {non_trainable:,}")
+
+# Projector parameters (if exists)
+if hasattr(model, 'model') and hasattr(model.model, 'projector'):
+    projector = model.model.projector
+    proj_trainable, proj_non_trainable, proj_total = count_parameters(projector)
+    print(f"\nProjector parameters:")
+    print(f"  Total:         {proj_total:,}")
+    print(f"  Trainable:    {proj_trainable:,}")
+    print(f"  Non-trainable: {proj_non_trainable:,}")
+elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
+    # decomposition mode has two projectors
+    projector_trend = model.model_trend.projector
+    projector_res = model.model_res.projector
+    proj_trainable, proj_non_trainable, proj_total = count_parameters(projector_trend)
+    proj_total = proj_total * 2  # two projectors
+    print(f"\nProjector parameters (2 projectors):")
+    print(f"  Total:         {proj_total:,}")
+    print(f"  Trainable:    {proj_trainable * 2:,}")
+    print(f"  Non-trainable: {proj_non_trainable * 2:,}")
+else:
+    print("\nNo projector found in model.")
+
+# TiViT parameters (frozen)
+if hasattr(model, 'tivit') and model.tivit is not None:
+    tivit_trainable, tivit_non_trainable, tivit_total = count_parameters(model.tivit)
+    print(f"\nTiViT parameters (frozen, excluded from total):")
+    print(f"  Total:         {tivit_total:,}")
+    print(f"  Non-trainable: {tivit_non_trainable:,}")
 
 print("\n" + "=" * 60)
 print("Summary:")
