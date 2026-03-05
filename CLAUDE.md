@@ -34,13 +34,14 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --projector_dim 768 --lambda_contrastive 0.5
+  --use_projector 1 --projector_dim 768 --lambda_contrastive 0.5 \
+  --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with TiViT-extracted features.
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/PatchTST/weather.sh
+sh ./scripts/PatchTST/etth1.sh
 ```
 
 ## Architecture
@@ -71,9 +72,10 @@ Input (Batch, Input Length, Channels)
   → RevIN denorm
 ```
 
-**Model Output**: The model returns a tuple `(output, zs)` where:
+**Model Output**: The model returns a tuple `(output, zs, zs_tilde)` where:
 - `output`: Final prediction output
-- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 2)
+- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 2), after MLP projector if enabled
+- `zs_tilde`: TiViT-extracted features from target sequence (only when `use_projector=1`)
 
 ### TiViT Feature Alignment
 
@@ -84,7 +86,7 @@ The system combines PatchTST with TiViT for enhanced feature representation:
    - MLP: `d_model` → hidden → `projector_dim` (default: 768)
    - Output: `(bs, nvars, projector_dim)` after mean pooling over patches
 
-2. **TiViT Feature Extraction** (`exp/exp_main.py`): Extracts features from target sequence `batch_y`
+2. **TiViT Feature Extraction** (`models/PatchTST.py`): TiViT is created inside the PatchTST model. Extracts features from target sequence `batch_y` per channel and returns `(bs, nvars, d_vit)`
 
 3. **Contrastive Loss**: Aligns PatchTST projected features with TiViT features
    - Combined loss: `MSE_loss + lambda * contrastive_loss`
@@ -105,6 +107,7 @@ The system combines PatchTST with TiViT for enhanced feature representation:
 - `projector_dim`: MLP projector output dimension (default: 768)
 - `use_projector`: Use MLP projector for zs (1: use, 0: not use)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
+- `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
 
 ## Directory Structure
 
@@ -208,3 +211,4 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 ## Bug Fixes
 
 - **Projector input dimension**: Fixed MLP projector input dimension from `head_nf` (d_model * patch_num) to `d_model` in `layers/PatchTST_backbone.py`
+- **TiViT moved to PatchTST model**: TiViT creation moved from `exp/exp_main.py` to `models/PatchTST.py` for better encapsulation
