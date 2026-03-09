@@ -108,6 +108,8 @@ class Model(nn.Module):
             network = Mantis8M(device=self.device)
             network = network.from_pretrained(self.mantis_pretrained)
             self.mantis = MantisTrainer(device=self.device, network=network)
+            # Register network as sub-module so its params are included in model.parameters()
+            self.add_module('mantis_network', self.mantis.network)
             self.mantis.network.eval()
             for param in self.mantis.network.parameters():
                 param.requires_grad = False

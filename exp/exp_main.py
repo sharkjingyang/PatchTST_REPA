@@ -48,14 +48,18 @@ class Exp_Main(Exp_Basic):
         all_total = sum(p.numel() for p in model.parameters())
         all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        # Exclude feature extractor from total
-        total = all_total - tivit_total - mantis_total
-
         # Get feature extractor type
         feature_extractor = getattr(model, 'feature_extractor', 'tivit')
 
+        # Exclude feature extractor from total
+        total = all_total - tivit_total - mantis_total
+        # Trainable excluding feature extractor (since they're frozen anyway)
+        trainable_excl = all_trainable - tivit_total - mantis_total
+
+        print(f"Total parameters (all):     {all_total:,}")
         print(f"Total parameters (excl. {feature_extractor}): {total:,}")
-        print(f"Trainable parameters:                      {all_trainable:,}")
+        print(f"Trainable parameters:       {all_trainable:,}")
+        print(f"Trainable (excl. {feature_extractor}): {trainable_excl:,}")
 
         # Projector params
         if hasattr(model, 'model') and hasattr(model.model, 'projector'):
