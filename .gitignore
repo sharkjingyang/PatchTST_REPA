@@ -175,7 +175,7 @@ ipython_config.py
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
 
 # Thumbnails
 ._*
@@ -461,5 +461,9 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+# Pre-trained model weights (download separately)
+Mantis/
+open_clip/
 
 # End of https://www.toptal.com/developers/gitignore/api/emacs,jetbrains+all,jupyternotebooks,linux,macos,microsoftoffice,notepadpp,python,tortoisegit,vim,visualstudiocode,windows

@@ -63,6 +63,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_projector', type=int, default=0, help='use MLP projector for zs (1: use, 0: not use)')
     parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')
+    parser.add_argument('--feature_extractor', type=str, default='tivit', choices=['tivit', 'mantis'], help='Feature extractor for contrastive loss: tivit or mantis')
+    parser.add_argument('--mantis_pretrained', type=str, default='./Mantis', help='Mantis pretrained model path')
     parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')

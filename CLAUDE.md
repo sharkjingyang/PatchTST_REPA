@@ -39,6 +39,18 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with TiViT-extracted features.
 
+### Running with PatchTST + Mantis Feature Alignment
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor mantis --mantis_pretrained ./Mantis \
+  --lambda_contrastive 0.5
+```
+This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Mantis-extracted features.
+
 Or use provided shell scripts:
 ```bash
 sh ./scripts/PatchTST/etth1.sh
@@ -77,20 +89,69 @@ Input (Batch, Input Length, Channels)
 - `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 2), after MLP projector if enabled
 - `zs_tilde`: TiViT-extracted features from target sequence (returned when `return_projector=True`)
 
-### TiViT Feature Alignment
+### Feature Alignment (TiViT or Mantis)
 
-The system combines PatchTST with TiViT for enhanced feature representation:
+The system combines PatchTST with a feature extractor for enhanced feature representation. Supports two extractors:
 
-1. **MLP Projector** (`layers/PatchTST_backbone.py`): Maps `zs` (from encoder intermediate layer) to TiViT feature space
+1. **MLP Projector** (`layers/PatchTST_backbone.py`): Maps `zs` (from encoder intermediate layer) to feature extractor space
    - Input: `(bs, nvars, d_model, patch_num)` → reshape → `(bs*nvars*patch_num, d_model)`
-   - MLP: `d_model` → hidden → `projector_dim` (default: 768)
+   - MLP: `d_model` → hidden → `projector_dim` (default: 768 for TiViT, 256 for Mantis)
    - Output: `(bs, nvars, projector_dim)` after mean pooling over patches
 
-2. **TiViT Feature Extraction** (`models/PatchTST.py`): TiViT is created inside the PatchTST model. Extracts features from target sequence `batch_y` per channel and returns `(bs, nvars, d_vit)`
+2. **TiViT Feature Extraction** (`layers/Tivit.py`): Converts time series to images and uses pre-trained ViT
+   - Extracts features from target sequence per channel
+   - Output: `(bs, nvars, 768)` - 768-dimensional features
 
-3. **Contrastive Loss**: Aligns PatchTST projected features with TiViT features
+3. **Mantis Feature Extraction** (`models/PatchTST.py`): Uses Mantis8M model from mantis-tsfm
+   - Resizes input to 512 length, extracts 256-dim features per channel
+   - Output: `(bs, nvars, 256)` - 256-dimensional features
+
+4. **Contrastive Loss**: Aligns PatchTST projected features with feature extractor features
    - Combined loss: `MSE_loss + lambda * contrastive_loss`
    - Default lambda: 0.5
+
+### Complete Shape Transformation (ETTh1 + Mantis Example)
+
+Key parameters: seq_len=336, pred_len=96, nvars=7, patch_len=16, stride=8, d_model=16, projector_dim=256
+
+#### DataLoader Output
+```
+batch_x: (batch, seq_len, nvars) = (32, 336, 7)
+batch_y: (batch, seq_len+pred_len, nvars) = (32, 432, 7)
+```
+
+#### PatchTST_backbone Forward
+```
+输入: (32, 7, 336)                    # (batch, nvars, seq_len)
+  ↓ 1. unfold (patching): (32, 7, 41, 16)     # (batch, nvars, patch_num, patch_len)
+  ↓ 2. permute: (32, 7, 16, 41)               # (batch, nvars, patch_len, patch_num)
+  ↓ 3. W_P (Linear: 16→16): (32, 7, 41, 16)  # (batch, nvars, patch_num, d_model)
+  ↓ 4. reshape: (224, 41, 16)                 # (batch*nvars, patch_num, d_model)
+  ↓ 5. Transformer Encoder (d_model=16 stays constant)
+  ↓ 6. reshape back: (32, 7, 16, 41)          # (batch, nvars, d_model, patch_num)
+  ↓ 7. MLP Projector: (32, 7, 256)            # (batch, nvars, projector_dim)
+
+zs: (32, 7, 256)                            # (batch, nvars, projector_dim)
+output: (32, 7, 96)                         # (batch, nvars, pred_len)
+```
+
+#### Mantis Feature Extraction (uses target[:, -pred_len:, :])
+```
+target_pred: (32, 96, 7)     # target[:, -pred_len:, :] - prediction part only
+  ↓ permute: (32, 7, 96)    # (batch, nvars, pred_len)
+  ↓ interpolate: (32, 7, 512) # resize to 512
+  ↓ Mantis.transform: (32, 1792)  # (batch, nvars*256)
+  ↓ reshape: (32, 7, 256)    # (batch, nvars, 256) = zs_tilde
+
+zs_tilde: (32, 7, 256)       # (batch, nvars, 256)
+```
+
+#### Final Output
+```
+output:   (32, 96, 7)   # (batch, pred_len, nvars)
+zs:       (32, 7, 256)  # (batch, nvars, projector_dim)
+zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
+```
 
 ### Key Hyperparameters
 - `patch_len`: Length of each patch (default: 16)
@@ -104,9 +165,11 @@ The system combines PatchTST with TiViT for enhanced feature representation:
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
 - `save_checkpoint`: Whether to save model checkpoint (1: save, 0: not save, default: 0)
-- `projector_dim`: MLP projector output dimension (default: 768)
+- `projector_dim`: MLP projector output dimension (default: 768, auto-adjusts to 256 when using Mantis)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
 - `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
+- `feature_extractor`: Feature extractor for contrastive loss: `tivit` or `mantis` (default: `tivit`)
+- `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 
 Note: Projector and TiViT are always created. Use `return_projector=True` in training to compute contrastive loss (vali/test will skip TiViT inference for speed).
 
@@ -116,20 +179,22 @@ Note: Projector and TiViT are always created. Use `return_projector=True` in tra
 PatchTST/
 ├── run_longExp.py              # Main entry point
 ├── layers/
-│   ├── PatchTST_backbone.py
+│   ├── PatchTST_backbone.py   # Core model with MLP projector
 │   ├── PatchTST_layers.py
 │   ├── RevIN.py
 │   ├── SelfAttention_Family.py
-│   └── Tivit.py                # TiViT: Time series to ViT embedding
+│   └── Tivit.py               # TiViT: Time series to ViT embedding
 ├── models/
-│   └── PatchTST.py
+│   └── PatchTST.py            # PatchTST model (includes TiViT/Mantis)
 ├── exp/                        # Experiment classes
 ├── data_provider/              # Data loading
 ├── scripts/PatchTST/           # Training scripts
-├── Formers/                    # Baseline models (Informer, Autoformer, etc.)
+├── diagnose_results/           # Debug scripts
+├── Formers/                    # Baseline models
 ├── utils/                      # Utilities
 ├── dataset/                    # Place downloaded CSV files here
 ├── open_clip/                  # Pre-trained CLIP model weights
+├── Mantis/                     # Pre-trained Mantis model weights
 ├── README.md
 ├── CLAUDE.md
 └── LICENSE
@@ -201,6 +266,33 @@ embeds = embed(tivit, loader, channels=7, device=device)
 - **embed function**: `(N, C, T)` → `(N, C, 768)` - per-channel embeddings
 - **Model**: ViT-B/16 outputs 768-dim features
 
+## Mantis (Time series to ViT via mantis-tsfm)
+
+Mantis module uses Mantis8M from mantis-tsfm for feature extraction.
+
+### Usage in PatchTST
+
+```python
+# Mantis is automatically created in models/PatchTST.py when feature_extractor='mantis'
+# The feature extraction is done in PatchTST.forward() when return_projector=True
+```
+
+### Input/Output Shapes
+
+- **Input**: `(batch, pred_len, nvars)` - uses only prediction part
+- **Preprocessing**: Resize to 512 via linear interpolation
+- **Mantis transform**: `(N, C, T)` → `(N, C*256)` - per-channel embeddings
+- **Output**: `(batch, nvars, 256)` - 256-dimensional features
+
+### Key Differences from TiViT
+
+| Feature | TiViT | Mantis |
+|---------|-------|--------|
+| Output dimension | 768 | 256 |
+| Input resize | Uses ViT native | Interpolate to 512 |
+| Model | CLIP ViT-B/16 | Mantis8M |
+| Pretrained path | `./open_clip/` | `./Mantis/` |
+
 ## Datasets
 
 Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, weather, illness, exchange_rate, ili (download from Autoformer drive).
@@ -213,3 +305,5 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 
 - **Projector input dimension**: Fixed MLP projector input dimension from `head_nf` (d_model * patch_num) to `d_model` in `layers/PatchTST_backbone.py`
 - **TiViT moved to PatchTST model**: TiViT creation moved from `exp/exp_main.py` to `models/PatchTST.py` for better encapsulation
+- **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
+- **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment

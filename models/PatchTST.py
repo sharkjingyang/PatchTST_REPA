@@ -12,6 +12,15 @@ from layers.PatchTST_backbone import PatchTST_backbone
 from layers.PatchTST_layers import series_decomp
 from layers.Tivit import get_tivit, get_patch_size
 
+# Try to import Mantis
+try:
+    from mantis.architecture import Mantis8M
+    from mantis.trainer import MantisTrainer
+    import torch.nn.functional as F
+    HAS_MANTIS = True
+except ImportError:
+    HAS_MANTIS = False
+
 
 class Model(nn.Module):
     def __init__(self, configs, max_seq_len:Optional[int]=1024, d_k:Optional[int]=None, d_v:Optional[int]=None, norm:str='BatchNorm', attn_dropout:float=0., 
@@ -24,6 +33,7 @@ class Model(nn.Module):
         c_in = configs.enc_in
         context_window = configs.seq_len
         target_window = configs.pred_len
+        self.pred_len = target_window  # Store for feature extraction
         
         n_layers = configs.e_layers
         n_heads = configs.n_heads
@@ -48,6 +58,17 @@ class Model(nn.Module):
         encoder_depth = configs.encoder_depth
         projector_dim = getattr(configs, 'projector_dim', 768)
 
+        # Feature extractor parameters
+        feature_extractor = getattr(configs, 'feature_extractor', 'tivit')
+        mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
+
+        # Auto-adjust projector_dim based on feature extractor
+        if feature_extractor == 'mantis':
+            projector_dim = 256  # Mantis output dimension
+            print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
+        self.feature_extractor = getattr(configs, 'feature_extractor', 'tivit')
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         # TiViT parameters
         self.tivit_model_name = getattr(configs, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
         self.tivit_layer = getattr(configs, 'tivit_layer', 6)
@@ -56,23 +77,42 @@ class Model(nn.Module):
         self.tivit_patch_size = getattr(configs, 'tivit_patch_size', 'sqrt')
         self.tivit_pretrained = getattr(configs, 'tivit_pretrained', './open_clip/open_clip_model.safetensors')
 
-        # Build TiViT (always created for TiViT feature alignment)
-        # Use context_window + target_window for TiViT (full sequence length)
-        full_seq_len = context_window + target_window
-        actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
-        self.tivit = get_tivit(
-            model_name=self.tivit_model_name,
-            model_layer=self.tivit_layer,
-            aggregation=self.tivit_aggregation,
-            stride=self.tivit_stride,
-            patch_size=actual_patch_size,
-            device='cuda' if torch.cuda.is_available() else 'cpu',
-            pretrained=self.tivit_pretrained,
-        )
-        self.tivit.eval()
-        # Freeze TiViT parameters
-        for param in self.tivit.parameters():
-            param.requires_grad = False
+        # Mantis parameters
+        self.mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
+        self.mantis_output_dim = 256  # Mantis default output dimension
+
+        # Build feature extractor (TiViT or Mantis)
+        self.tivit = None
+        self.mantis = None
+
+        if self.feature_extractor == 'tivit':
+            # Build TiViT
+            full_seq_len = context_window + target_window
+            actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
+            self.tivit = get_tivit(
+                model_name=self.tivit_model_name,
+                model_layer=self.tivit_layer,
+                aggregation=self.tivit_aggregation,
+                stride=self.tivit_stride,
+                patch_size=actual_patch_size,
+                device=self.device,
+                pretrained=self.tivit_pretrained,
+            )
+            self.tivit.eval()
+            for param in self.tivit.parameters():
+                param.requires_grad = False
+        elif self.feature_extractor == 'mantis':
+            if not HAS_MANTIS:
+                raise ImportError("mantis-tsfm is not installed. Please install it with: pip install mantis-tsfm")
+            # Build Mantis
+            network = Mantis8M(device=self.device)
+            network = network.from_pretrained(self.mantis_pretrained)
+            self.mantis = MantisTrainer(device=self.device, network=network)
+            self.mantis.network.eval()
+            for param in self.mantis.network.parameters():
+                param.requires_grad = False
+        else:
+            raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit' or 'mantis'.")
 
         # model
         self.decomposition = decomposition
@@ -126,18 +166,41 @@ class Model(nn.Module):
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
             # zs: keep as (bs, nvars, d_model) to match zs_tilde shape
 
-            # Only extract TiViT features when return_projector=True (training)
+            # Only extract feature extractor features when return_projector=True (training)
             zs_tilde = None
-            if return_projector and self.tivit is not None and target is not None:
+            if return_projector and target is not None:
                 with torch.no_grad():
-                    # target: (bs, seq_len+pred_len, nvars) -> keep as (bs, seq_len, nvars)
-                    # Process each channel separately
-                    # TiViT expects input: (bs, seq_len, 1) for single channel
-                    zs_tilde_list = []
-                    for c in range(target.shape[2]):  # target.shape[2] = nvars
-                        channel_input = target[:, :, c:c+1]  # (bs, seq_len, 1)
-                        channel_embed = self.tivit(channel_input)  # (bs, d_vit)
-                        zs_tilde_list.append(channel_embed)
-                    zs_tilde = torch.stack(zs_tilde_list, dim=1)  # (bs, nvars, d_vit)
+                    # Use only the prediction part: target[:, -pred_len:, :]
+                    target_pred = target[:, -self.pred_len:, :]  # (bs, pred_len, nvars)
+
+                    if self.feature_extractor == 'tivit' and self.tivit is not None:
+                        # TiViT extraction
+                        # target_pred: (bs, pred_len, nvars)
+                        # TiViT expects input: (bs, seq_len, 1) for single channel
+                        zs_tilde_list = []
+                        for c in range(target_pred.shape[2]):  # target_pred.shape[2] = nvars
+                            channel_input = target_pred[:, :, c:c+1]  # (bs, pred_len, 1)
+                            channel_embed = self.tivit(channel_input)  # (bs, d_vit)
+                            zs_tilde_list.append(channel_embed)
+                        zs_tilde = torch.stack(zs_tilde_list, dim=1)  # (bs, nvars, d_vit)
+                    elif self.feature_extractor == 'mantis' and self.mantis is not None:
+                        # Mantis extraction
+                        # Mantis expects: (n_samples, channels, time_steps)
+                        # target_pred: (bs, pred_len, nvars) -> (bs, nvars, pred_len)
+                        target_perm = target_pred.permute(0, 2, 1)  # (bs, nvars, pred_len)
+                        # Resize to 512 for Mantis
+                        target_scaled = F.interpolate(
+                            target_perm.float(),
+                            size=512,
+                            mode='linear',
+                            align_corners=False
+                        )  # (bs, nvars, 512)
+                        # Mantis transform: (n_samples, channels, time_steps) -> (n_samples, channels * 256)
+                        target_np = target_scaled.cpu().numpy()
+                        bs, nvars, _ = target_scaled.shape
+                        zs_tilde_flat = self.mantis.transform(target_np)  # (bs, nvars * 256)
+                        # Convert back to tensor and reshape
+                        zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
+                        zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)  # (bs, nvars, 256)
 
             return output, zs, zs_tilde

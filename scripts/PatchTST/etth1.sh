@@ -16,6 +16,9 @@ data_name=ETTh1
 random_seed=2021
 pred_len=96
 
+# Choose feature extractor: 'tivit' or 'mantis'
+feature_extractor='tivit'
+
 python -u run_longExp.py \
   --random_seed $random_seed \
   --is_training 1 \
@@ -41,7 +44,8 @@ python -u run_longExp.py \
   --train_epochs 100\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --save_checkpoint 0 \
-  --use_projector 1 \
+  --feature_extractor $feature_extractor \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
-  --tivit_pretrained ./open_clip/open_clip_model.safetensors
+  --tivit_pretrained ./open_clip/open_clip_model.safetensors \
+  --mantis_pretrained ./Mantis
