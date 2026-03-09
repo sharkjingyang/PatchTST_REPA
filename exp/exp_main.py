@@ -215,6 +215,8 @@ class Exp_Main(Exp_Basic):
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
+            train_mse_loss = []
+            train_contrastive_loss = []
 
             self.model.train()
             epoch_time = time.time()
@@ -272,9 +274,16 @@ class Exp_Main(Exp_Basic):
                     loss = mse_loss + lambda_loss * contrastive_loss
 
                     train_loss.append(loss.item())
+                    train_mse_loss.append(mse_loss.item())
+                    train_contrastive_loss.append(contrastive_loss.item())
 
                 if (i + 1) % 100 == 0:
-                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+                    # Only print detailed loss for PatchTST models with contrastive loss
+                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | contrastive: {4:.7f}".format(
+                            i + 1, epoch + 1, loss.item(), mse_loss.item(), contrastive_loss.item()))
+                    else:
+                        print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
                     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
                     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
@@ -295,11 +304,13 @@ class Exp_Main(Exp_Basic):
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
+            train_mse_loss = np.average(train_mse_loss)
+            train_contrastive_loss = np.average(train_contrastive_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
-                epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} | Train MSE: {3:.7f} | Train Contrastive: {4:.7f} | Vali Loss: {5:.7f} | Test Loss: {6:.7f}".format(
+                epoch + 1, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
             if self.args.save_checkpoint:
                 early_stopping(vali_loss, self.model, path)
                 if early_stopping.early_stop:
