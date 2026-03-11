@@ -90,22 +90,20 @@ class PatchTST_backbone(nn.Module):
         z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride)                   # z: [bs x nvars x patch_num x patch_len]
         z = z.permute(0,1,3,2)                                                              # z: [bs x nvars x patch_len x patch_num]
 
-        # model - always return both output and intermediate
-        z, zs = self.backbone(z)                                                            # z: [bs x nvars x d_model x patch_num], zs: intermediate output
+        # model - only request intermediate when use_projector=1
+        if self.use_projector:
+            z, zs = self.backbone(z, return_intermediate=True)                               # z: [bs x nvars x d_model x patch_num], zs: intermediate output
 
-        # Apply MLP projector to zs (for TiViT alignment) only when use_projector=1
-        if self.use_projector and self.projector is not None:
-            # zs: [bs x nvars x d_model x patch_num]
-            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
+            # Apply MLP projector to zs
             bs, nvars, d_model, patch_num = zs.shape
             zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
             zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
             zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
             zs_projected = zs_projected.mean(dim=2)                                        # [bs x nvars x projector_dim] - mean pooling over patches
         else:
-            # Original PatchTST: use zs directly (mean over patches)
-            bs, nvars, d_model, patch_num = zs.shape
-            zs_projected = zs.mean(dim=3)  # [bs x nvars x d_model]
+            # Original PatchTST: no intermediate output needed
+            z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
+            zs_projected = None
 
         output = self.head(z)                                                               # z: [bs x nvars x target_window]
 
@@ -115,7 +113,11 @@ class PatchTST_backbone(nn.Module):
             output = self.revin_layer(output, 'denorm')
             output = output.permute(0,2,1)
 
-        return output, zs_projected
+        # Original PatchTST: return only output when use_projector=0
+        if self.use_projector:
+            return output, zs_projected
+        else:
+            return output
     
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout),
@@ -192,7 +194,7 @@ class TSTiEncoder(nn.Module):  #i means channel-independent
                                    pre_norm=pre_norm, activation=act, res_attention=res_attention, n_layers=n_layers, store_attn=store_attn)
 
 
-    def forward(self, x) -> Tensor:                                              # x: [bs x nvars x patch_len x patch_num]
+    def forward(self, x, return_intermediate=False) -> Tensor:                   # x: [bs x nvars x patch_len x patch_num]
 
         n_vars = x.shape[1]
         # Input encoding
@@ -202,22 +204,26 @@ class TSTiEncoder(nn.Module):  #i means channel-independent
         u = torch.reshape(x, (x.shape[0]*x.shape[1],x.shape[2],x.shape[3]))      # u: [bs * nvars x patch_num x d_model]
         u = self.dropout(u + self.W_pos)                                         # u: [bs * nvars x patch_num x d_model]
 
-        # Encoder - always return intermediate
-        z, intermediate = self.encoder(u, return_intermediate=True)              # z: [bs * nvars x patch_num x d_model]
+        # Encoder - only return intermediate when needed
+        if return_intermediate:
+            z, intermediate = self.encoder(u, return_intermediate=True)           # z: [bs * nvars x patch_num x d_model]
 
-        # Reshape intermediate outputs
-        intermediate_reshaped = []
-        for intermediate_z in intermediate:
-            intermediate_z = torch.reshape(intermediate_z, (-1, n_vars, intermediate_z.shape[-2], intermediate_z.shape[-1]))
-            intermediate_z = intermediate_z.permute(0, 1, 3, 2)                  # [bs x nvars x d_model x patch_num]
-            intermediate_reshaped.append(intermediate_z)
+            # Reshape intermediate outputs
+            intermediate_reshaped = []
+            for intermediate_z in intermediate:
+                intermediate_z = torch.reshape(intermediate_z, (-1, n_vars, intermediate_z.shape[-2], intermediate_z.shape[-1]))
+                intermediate_z = intermediate_z.permute(0, 1, 3, 2)              # [bs x nvars x d_model x patch_num]
+                intermediate_reshaped.append(intermediate_z)
 
-        # Get output at specified encoder_depth
-        encoder_idx = self.encoder_depth - 1  # 0-indexed
-        if encoder_idx < len(intermediate_reshaped):
-            zs = intermediate_reshaped[encoder_idx]
+            # Get output at specified encoder_depth
+            encoder_idx = self.encoder_depth - 1  # 0-indexed
+            if encoder_idx < len(intermediate_reshaped):
+                zs = intermediate_reshaped[encoder_idx]
+            else:
+                zs = z.permute(0,1,3,2)  # fallback to final output
         else:
-            zs = z.permute(0,1,3,2)  # fallback to final output
+            z = self.encoder(u)                                                  # z: [bs * nvars x patch_num x d_model]
+            zs = None
 
         z = torch.reshape(z, (-1,n_vars,z.shape[-2],z.shape[-1]))                # z: [bs x nvars x patch_num x d_model]
         z = z.permute(0,1,3,2)                                                   # z: [bs x nvars x d_model x patch_num]

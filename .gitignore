@@ -466,4 +466,7 @@ $RECYCLE.BIN/
 Mantis/
 open_clip/
 
+# Reference PatchTST implementation (for comparison only)
+PatchTST-main/
+
 # End of https://www.toptal.com/developers/gitignore/api/emacs,jetbrains+all,jupyternotebooks,linux,macos,microsoftoffice,notepadpp,python,tortoisegit,vim,visualstudiocode,windows

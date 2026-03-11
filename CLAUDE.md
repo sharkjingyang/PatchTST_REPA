@@ -97,11 +97,12 @@ Input (Batch, Input Length, Channels)
 ```
 
 **Model Output**: The model returns:
-- When `return_projector=False` (or `use_projector=0`): tuple `(output, zs)`
-- When `return_projector=True` and `use_projector=1`: tuple `(output, zs, zs_tilde)`
+- When `use_projector=0` (original PatchTST): only `output`
+- When `use_projector=1` and `return_projector=False`: tuple `(output, zs)`
+- When `use_projector=1` and `return_projector=True`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
-- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 4), after MLP projector if enabled
-- `zs_tilde`: Feature extractor (TiViT/Mantis) extracted features from target sequence (returned when `return_projector=True`)
+- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 4), after MLP projector
+- `zs_tilde`: Feature extractor (TiViT/Mantis) extracted features from target sequence
 
 ### Feature Alignment (TiViT or Mantis)
 
@@ -174,7 +175,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `pred_len`: Prediction sequence length (forecast horizon)
 - `d_model`: Transformer model dimension
 - `n_heads`: Number of attention heads
-- `e_layers`: Number of encoder layers (default: 4)
+- `e_layers`: Number of encoder layers (default: 3)
 - `encoder_depth`: Which encoder layer to extract intermediate output (default: 4)
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
@@ -186,7 +187,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `feature_extractor`: Feature extractor for contrastive loss: `tivit` or `mantis` (default: `mantis`)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 
-Note: Projector and feature extractor are only created when `use_projector=1`. Use `return_projector=True` in training to compute contrastive loss (vali/test will skip feature extractor inference for speed).
+Note: Projector and feature extractor are only created when `use_projector=1`. Default is `use_projector=0` (original PatchTST). Use `return_projector=True` in training to compute contrastive loss (vali/test will skip feature extractor inference for speed).
 
 ## Directory Structure
 
@@ -317,6 +318,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 ## Debug & Diagnostics
 
 - `diagnose_results/debug_shapes.py` - Debug script to check tensor shapes during training
+- `diagnose_results/compare_models.py` - Compare our implementation with original PatchTST to verify numerical consistency (forward pass and gradients)
 
 ## Bug Fixes
 
@@ -325,3 +327,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
 - **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment
 - **use_projector switch**: Added `use_projector` parameter to enable/disable projector and feature extractors for baseline comparison (use_projector=0: original PatchTST, use_projector=1: with feature alignment)
+- **Original PatchTST compatibility**: When `use_projector=0`, the model now behaves identically to original PatchTST:
+  - TSTiEncoder only computes final output (no intermediate extraction)
+  - PatchTST_backbone.forward returns only `output` (not tuple)
+  - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)

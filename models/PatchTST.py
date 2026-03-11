@@ -173,9 +173,16 @@ class Model(nn.Module):
             return x, x  # Return same output for both when using decomposition
         else:
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
-            output, zs = self.model(x)  # always returns (output, zs)
+
+            # Original PatchTST (use_projector=0): return only output
+            if not self.use_projector:
+                output = self.model(x)  # returns only output
+                output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
+                return output
+
+            # With projector (use_projector=1): return output and zs
+            output, zs = self.model(x)  # returns (output, zs_projected)
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
-            # zs: keep as (bs, nvars, d_model) to match zs_tilde shape
 
             # Only extract feature extractor features when return_projector=True (training)
             zs_tilde = None

@@ -251,7 +251,7 @@ class Exp_Main(Exp_Basic):
                             if use_projector:
                                 outputs, _, _ = self.model(batch_x, batch_y, return_projector=True)  # Get final output + features
                             else:
-                                outputs = self.model(batch_x, batch_y, return_projector=False)[0]  # Get final output only
+                                outputs = self.model(batch_x, batch_y)  # Original PatchTST: returns only output
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -270,7 +270,7 @@ class Exp_Main(Exp_Basic):
                         if use_projector:
                             outputs, zs_project, zs_tilde = self.model(batch_x, batch_y, return_projector=True)  # Get final output + projected features + TiViT features
                         else:
-                            outputs, _ = self.model(batch_x, batch_y, return_projector=False)  # Original PatchTST
+                            outputs = self.model(batch_x, batch_y)  # Original PatchTST: returns only output
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -390,7 +390,10 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs = self.model(batch_x)[0]  # Get final output only
+                            # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                            outputs = self.model(batch_x)
+                            if isinstance(outputs, tuple):
+                                outputs = outputs[0]
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -398,7 +401,10 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        outputs = self.model(batch_x)[0]  # Get final output only
+                        # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                        outputs = self.model(batch_x)
+                        if isinstance(outputs, tuple):
+                            outputs = outputs[0]
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
