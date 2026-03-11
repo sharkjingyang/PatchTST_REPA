@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PatchTST is an official implementation of the ICLR 2023 paper: "A Time Series is Worth 64 Words: Long-term Forecasting with Transformers". It uses a patch-based approach for time series forecasting with Transformer architectures.
+This is an extended implementation of PatchTST: "A Time Series is Worth 64 Words: Long-term Forecasting with Transformers" (ICLR 2023). It uses a patch-based approach for time series forecasting with Transformer architectures.
 
-The repository contains the supervised learning implementation for forecasting.
+This project extends PatchTST with feature alignment using contrastive learning. Supports two feature extractors: **TiViT** (Time series to ViT) and **Mantis** (from mantis-tsfm). The MLP projector maps PatchTST's intermediate encoder features to align with extracted features from the target sequence.
 
 ## Common Commands
 
@@ -96,10 +96,12 @@ Input (Batch, Input Length, Channels)
   → RevIN denorm
 ```
 
-**Model Output**: The model returns a tuple `(output, zs, zs_tilde)` where:
+**Model Output**: The model returns:
+- When `return_projector=False` (or `use_projector=0`): tuple `(output, zs)`
+- When `return_projector=True` and `use_projector=1`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
-- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 2), after MLP projector if enabled
-- `zs_tilde`: TiViT-extracted features from target sequence (returned when `return_projector=True`)
+- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: layer 4), after MLP projector if enabled
+- `zs_tilde`: Feature extractor (TiViT/Mantis) extracted features from target sequence (returned when `return_projector=True`)
 
 ### Feature Alignment (TiViT or Mantis)
 
@@ -173,7 +175,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `d_model`: Transformer model dimension
 - `n_heads`: Number of attention heads
 - `e_layers`: Number of encoder layers (default: 4)
-- `encoder_depth`: Which encoder layer to extract intermediate output (default: 2)
+- `encoder_depth`: Which encoder layer to extract intermediate output (default: 4)
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
 - `save_checkpoint`: Whether to save model checkpoint (1: save, 0: not save, default: 0)
@@ -184,7 +186,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `feature_extractor`: Feature extractor for contrastive loss: `tivit` or `mantis` (default: `mantis`)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 
-Note: Projector and TiViT are always created. Use `return_projector=True` in training to compute contrastive loss (vali/test will skip TiViT inference for speed).
+Note: Projector and feature extractor are only created when `use_projector=1`. Use `return_projector=True` in training to compute contrastive loss (vali/test will skip feature extractor inference for speed).
 
 ## Directory Structure
 
@@ -322,3 +324,4 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **TiViT moved to PatchTST model**: TiViT creation moved from `exp/exp_main.py` to `models/PatchTST.py` for better encapsulation
 - **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
 - **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment
+- **use_projector switch**: Added `use_projector` parameter to enable/disable projector and feature extractors for baseline comparison (use_projector=0: original PatchTST, use_projector=1: with feature alignment)
