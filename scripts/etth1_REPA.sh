@@ -7,7 +7,7 @@ if [ ! -d "./logs/LongForecasting" ]; then
 fi
 seq_len=336
 script_name=$(basename "$0" .sh)
-model_name=PatchTST
+model_name=PatchTST_REPA
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv

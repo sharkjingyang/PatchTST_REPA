@@ -96,7 +96,20 @@ class Exp_Main(Exp_Basic):
             'NLinear': NLinear,
             'Linear': Linear,
             'PatchTST': PatchTST,
+            'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
         }
+
+        # Auto-set use_projector based on model_name:
+        # - PatchTST: original PatchTST (use_projector=0)
+        # - PatchTST_REPA: PatchTST with feature alignment (use_projector=1)
+        if self.args.model == 'PatchTST_REPA':
+            self.args.use_projector = 1
+            print(f"\n>>> Using PatchTST_REPA: auto-set use_projector=1 (with projector + contrastive loss)")
+        elif self.args.model == 'PatchTST':
+            # Keep user's explicit use_projector setting, or default to 0 for original PatchTST
+            if not hasattr(self.args, 'use_projector'):
+                self.args.use_projector = 0
+
         model = model_dict[self.args.model].Model(self.args).float()
 
         if self.args.use_multi_gpu and self.args.use_gpu:

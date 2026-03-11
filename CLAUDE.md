@@ -27,29 +27,29 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001
 ```
 
-### Running with PatchTST + TiViT Feature Alignment
+### Running with PatchTST_REPA (Feature Alignment with Mantis)
 ```bash
-python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --feature_extractor tivit --projector_dim 768 \
+  --mantis_pretrained ./Mantis --lambda_contrastive 0.5
+```
+This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Mantis-extracted features.
+
+### Running with PatchTST_REPA + TiViT Feature Alignment
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor tivit --projector_dim 768 \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with TiViT-extracted features.
-
-### Running with PatchTST + Mantis Feature Alignment (Default)
-```bash
-python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
-  --root_path ./dataset/ --data_path weather.csv \
-  --features M --seq_len 336 --pred_len 96 \
-  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --mantis_pretrained ./Mantis --lambda_contrastive 0.5
-```
-This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Mantis-extracted features.
 
 ### Running Original PatchTST (without projector)
 ```bash
@@ -57,14 +57,13 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 0
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001
 ```
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1_REPA.sh     # PatchTST + Mantis feature alignment
-sh ./scripts/etth1_PatchTST.sh # Original PatchTST
+sh ./scripts/etth1_REPA.sh     # PatchTST_REPA: PatchTST + Mantis feature alignment
+sh ./scripts/etth1_PatchTST.sh # PatchTST: Original PatchTST (baseline)
 ```
 
 ## Architecture
