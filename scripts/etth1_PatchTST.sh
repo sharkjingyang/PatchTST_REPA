@@ -6,7 +6,8 @@ if [ ! -d "./logs/LongForecasting" ]; then
     mkdir ./logs/LongForecasting
 fi
 seq_len=336
-model_name=etth1_PatchTST
+script_name=$(basename "$0" .sh)
+model_name=PatchTST
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
@@ -45,4 +46,4 @@ python -u run_longExp.py \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --save_checkpoint 0 \
   --use_projector $use_projector \
-  >logs/LongForecasting/${model_name}_${pred_len}.log
+  >logs/LongForecasting/${script_name}_${pred_len}.log
