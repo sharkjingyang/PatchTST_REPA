@@ -47,8 +47,7 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --feature_extractor mantis \
-  --mantis_pretrained ./Mantis --lambda_contrastive 0.5
+  --use_projector 1 --mantis_pretrained ./Mantis --lambda_contrastive 0.5
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Mantis-extracted features.
 

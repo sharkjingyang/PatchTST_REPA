@@ -14,7 +14,7 @@ model_id_name=ETTh1
 data_name=ETTh1
 
 random_seed=2021
-pred_len=96
+pred_len=720
 
 # Choose feature extractor: 'tivit' or 'mantis'
 feature_extractor='mantis'

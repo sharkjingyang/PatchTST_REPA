@@ -38,7 +38,7 @@ class Exp_Main(Exp_Basic):
 
         # Get TiViT params
         tivit_total = 0
-        if hasattr(model, 'tivit') and model.tivit is not None:
+        if hasattr(model, 'mantis') and model.tivit is not None:
             tivit_total = sum(p.numel() for p in model.tivit.parameters())
 
         # Get Mantis params (from mantis.network)
@@ -53,12 +53,13 @@ class Exp_Main(Exp_Basic):
 
         if use_projector:
             # Get feature extractor type
-            feature_extractor = getattr(model, 'feature_extractor', 'tivit')
+            feature_extractor = getattr(model, 'feature_extractor', 'mantis')
 
             # Exclude feature extractor from total
             total = all_total - tivit_total - mantis_total
-            # Trainable excluding feature extractor (since they're frozen anyway)
-            trainable_excl = all_trainable - tivit_total - mantis_total
+            # Trainable excluding feature extractor (they are frozen anyway, so just use all_trainable)
+            # Note: Feature extractor params have requires_grad=False, so no need to subtract
+            trainable_excl = all_trainable
 
             print(f"Total parameters (all):     {all_total:,}")
             print(f"Total parameters (excl. {feature_extractor}): {total:,}")
@@ -74,7 +75,7 @@ class Exp_Main(Exp_Basic):
                 print(f"\nProjector parameters (2): {proj_total:,}")
 
             # Feature extractor params
-            if feature_extractor == 'tivit' and tivit_total > 0:
+            if feature_extractor == 'mantis' and tivit_total > 0:
                 print(f"\nTiViT parameters (frozen, excluded): {tivit_total:,}")
             elif feature_extractor == 'mantis' and mantis_total > 0:
                 print(f"\nMantis parameters (frozen, excluded): {mantis_total:,}")

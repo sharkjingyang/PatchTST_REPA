@@ -60,14 +60,14 @@ class Model(nn.Module):
 
         # Feature extractor parameters
         self.use_projector = getattr(configs, 'use_projector', 0)  # 1: use projector, 0: original PatchTST
-        feature_extractor = getattr(configs, 'feature_extractor', 'tivit')
+        feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
 
         # Auto-adjust projector_dim based on feature extractor
         if feature_extractor == 'mantis':
             projector_dim = 256  # Mantis output dimension
             print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
-        self.feature_extractor = getattr(configs, 'feature_extractor', 'tivit')
+        self.feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # TiViT parameters
@@ -87,7 +87,7 @@ class Model(nn.Module):
         self.mantis = None
 
         if self.use_projector:
-            if self.feature_extractor == 'tivit':
+            if self.feature_extractor == 'mantis':
                 # Build TiViT
                 full_seq_len = context_window + target_window
                 actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
@@ -116,7 +116,7 @@ class Model(nn.Module):
                 for param in self.mantis.network.parameters():
                     param.requires_grad = False
             else:
-                raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit' or 'mantis'.")
+                raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'mantis' or 'mantis'.")
         else:
             # use_projector=0: original PatchTST, no TiViT/Mantis
             pass
@@ -191,7 +191,7 @@ class Model(nn.Module):
                     # Use only the prediction part: target[:, -pred_len:, :]
                     target_pred = target[:, -self.pred_len:, :]  # (bs, pred_len, nvars)
 
-                    if self.feature_extractor == 'tivit' and self.tivit is not None:
+                    if self.feature_extractor == 'mantis' and self.tivit is not None:
                         # TiViT extraction
                         # target_pred: (bs, pred_len, nvars)
                         # TiViT expects input: (bs, seq_len, 1) for single channel

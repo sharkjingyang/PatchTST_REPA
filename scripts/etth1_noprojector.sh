@@ -31,7 +31,7 @@ python -u run_longExp.py \
   --seq_len $seq_len \
   --pred_len $pred_len \
   --enc_in 7 \
-  --e_layers 3 \
+  --e_layers 4 \
   --n_heads 4 \
   --d_model 16 \
   --d_ff 128 \
