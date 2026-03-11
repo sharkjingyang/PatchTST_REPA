@@ -6,7 +6,15 @@
       "Bash(git remote remove:*)",
       "Bash(git add:*)",
       "Bash(git commit -m:*)",
-      "Bash(git push -u repa main)"
+      "Bash(git push -u repa main)",
+      "Bash(python:*)",
+      "Bash(git push)",
+      "Bash(sh scripts/PatchTST/etth1.sh)",
+      "Bash(git push:*)",
+      "Bash(npx skills find claudeception)",
+      "Bash(npx:*)",
+      "Bash(git reset:*)",
+      "Bash(git restore:*)"
     ]
   }
 }
