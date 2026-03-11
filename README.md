@@ -45,12 +45,12 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1.sh                # PatchTST with Mantis feature alignment (use_projector=1)
-sh ./scripts/etth1_noprojector.sh    # Original PatchTST without projector (use_projector=0)
+sh ./scripts/etth1_REPA.sh           # PatchTST with Mantis feature alignment (use_projector=1)
+sh ./scripts/etth1_PatchTST.sh       # Original PatchTST without projector (use_projector=0)
 ```
 
-- **etth1.sh**: Runs PatchTST with contrastive learning feature alignment using Mantis as feature extractor
-- **etth1_noprojector.sh**: Runs original PatchTST (baseline, no projector or feature extractor)
+- **etth1_REPA.sh**: Runs PatchTST with contrastive learning feature alignment using Mantis as feature extractor
+- **etth1_PatchTST.sh**: Runs original PatchTST (baseline, no projector or feature extractor)
 
 #### PatchTST + Mantis Feature Alignment (Default)
 ```bash
@@ -192,8 +192,8 @@ PatchTST/
 │   └── exp_main.py             # Training with feature alignment
 ├── data_provider/              # Data loading
 ├── scripts/                    # Training scripts
-│   ├── etth1.sh                 # PatchTST + Mantis feature alignment
-│   └── etth1_noprojector.sh    # Original PatchTST (baseline)
+│   ├── etth1_REPA.sh            # PatchTST + Mantis feature alignment
+│   └── etth1_PatchTST.sh       # Original PatchTST (baseline)
 ├── diagnose_results/          # Debug scripts
 ├── dataset/                   # Place downloaded CSV files here
 ├── open_clip/                 # Pre-trained CLIP model weights

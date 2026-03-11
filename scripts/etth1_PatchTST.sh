@@ -6,7 +6,7 @@ if [ ! -d "./logs/LongForecasting" ]; then
     mkdir ./logs/LongForecasting
 fi
 seq_len=336
-model_name=PatchTST
+model_name=etth1_PatchTST
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
@@ -16,11 +16,8 @@ data_name=ETTh1
 random_seed=2021
 pred_len=720
 
-# Choose feature extractor: 'tivit' or 'mantis'
-feature_extractor='mantis'
-
 # Use projector for feature alignment (1: use, 0: original PatchTST)
-use_projector=1
+use_projector=0
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -35,7 +32,6 @@ python -u run_longExp.py \
   --pred_len $pred_len \
   --enc_in 7 \
   --e_layers 4 \
-  --encoder_depth 4 \
   --n_heads 4 \
   --d_model 16 \
   --d_ff 128 \
@@ -49,8 +45,4 @@ python -u run_longExp.py \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --save_checkpoint 0 \
   --use_projector $use_projector \
-  --feature_extractor $feature_extractor \
-  --projector_dim 768 \
-  --lambda_contrastive 0.5 \
-  --tivit_pretrained ./open_clip/open_clip_model.safetensors \
-  --mantis_pretrained ./Mantis
+  >logs/LongForecasting/${model_name}_${pred_len}.log

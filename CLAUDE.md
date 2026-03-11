@@ -63,8 +63,8 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1.sh          # With projector + Mantis
-sh ./scripts/etth1_noprojector.sh  # Original PatchTST
+sh ./scripts/etth1_REPA.sh     # PatchTST + Mantis feature alignment
+sh ./scripts/etth1_PatchTST.sh # Original PatchTST
 ```
 
 ## Architecture
@@ -204,8 +204,8 @@ PatchTST/
 ├── exp/                        # Experiment classes
 ├── data_provider/              # Data loading
 ├── scripts/                    # Training scripts
-│   ├── etth1.sh                 # PatchTST + Mantis (use_projector=1)
-│   └── etth1_noprojector.sh    # Original PatchTST (use_projector=0)
+│   ├── etth1_REPA.sh            # PatchTST + Mantis feature alignment
+│   └── etth1_PatchTST.sh       # Original PatchTST (baseline)
 ├── diagnose_results/           # Debug scripts
 ├── Formers/                    # Baseline models
 ├── utils/                      # Utilities
