@@ -251,7 +251,12 @@ class Exp_Main(Exp_Basic):
                         train_loss.append(loss.item())
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        # Check if use_projector is enabled
+                        use_projector = getattr(self.args, 'use_projector', 0)
+                        if use_projector:
                             outputs, zs_project, zs_tilde = self.model(batch_x, batch_y, return_projector=True)  # Get final output + projected features + TiViT features
+                        else:
+                            outputs, _ = self.model(batch_x, batch_y, return_projector=False)  # Original PatchTST
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -266,12 +271,15 @@ class Exp_Main(Exp_Basic):
                     # MSE loss for prediction
                     mse_loss = criterion(outputs, batch_y_pred)
 
-                    # Contrastive loss for feature alignment
-                    lambda_loss = self.args.lambda_contrastive
-                    contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
-
-                    # Combined loss: MSE + lambda * contrastive
-                    loss = mse_loss + lambda_loss * contrastive_loss
+                    # Contrastive loss for feature alignment (only when use_projector=1)
+                    use_projector = getattr(self.args, 'use_projector', 0)
+                    if use_projector:
+                        lambda_loss = self.args.lambda_contrastive
+                        contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
+                        loss = mse_loss + lambda_loss * contrastive_loss
+                    else:
+                        contrastive_loss = torch.tensor(0.0)
+                        loss = mse_loss
 
                     train_loss.append(loss.item())
                     train_mse_loss.append(mse_loss.item())

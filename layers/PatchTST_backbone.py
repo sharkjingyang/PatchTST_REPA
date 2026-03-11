@@ -29,7 +29,7 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, projector_dim: int = 768, verbose:bool=False, **kwargs):
+                 encoder_depth: int = 2, projector_dim: int = 768, use_projector: int = 0, verbose:bool=False, **kwargs):
         
         super().__init__()
         
@@ -67,11 +67,14 @@ class PatchTST_backbone(nn.Module):
         elif head_type == 'flatten':
             self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
-        # MLP Projector for aligning zs with TiViT features (always created)
+        # MLP Projector for aligning zs with TiViT features (only when use_projector=1)
+        self.use_projector = use_projector
         self.projector_dim = projector_dim
-        # zs shape: [bs, nvars, d_model, patch_num]
-        # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
-        self.projector = build_mlp(d_model, projector_dim // 2, projector_dim)
+        self.projector = None
+        if self.use_projector:
+            # zs shape: [bs, nvars, d_model, patch_num]
+            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
+            self.projector = build_mlp(d_model, projector_dim // 2, projector_dim)
         
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
@@ -90,14 +93,19 @@ class PatchTST_backbone(nn.Module):
         # model - always return both output and intermediate
         z, zs = self.backbone(z)                                                            # z: [bs x nvars x d_model x patch_num], zs: intermediate output
 
-        # Apply MLP projector to zs (for TiViT alignment)
-        # zs: [bs x nvars x d_model x patch_num]
-        # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
-        bs, nvars, d_model, patch_num = zs.shape
-        zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
-        zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
-        zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
-        zs_projected = zs_projected.mean(dim=2)                                        # [bs x nvars x projector_dim] - mean pooling over patches
+        # Apply MLP projector to zs (for TiViT alignment) only when use_projector=1
+        if self.use_projector and self.projector is not None:
+            # zs: [bs x nvars x d_model x patch_num]
+            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
+            bs, nvars, d_model, patch_num = zs.shape
+            zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
+            zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
+            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
+            zs_projected = zs_projected.mean(dim=2)                                        # [bs x nvars x projector_dim] - mean pooling over patches
+        else:
+            # Original PatchTST: use zs directly (mean over patches)
+            bs, nvars, d_model, patch_num = zs.shape
+            zs_projected = zs.mean(dim=3)  # [bs x nvars x d_model]
 
         output = self.head(z)                                                               # z: [bs x nvars x target_window]
 

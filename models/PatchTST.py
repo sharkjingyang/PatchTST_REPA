@@ -59,6 +59,7 @@ class Model(nn.Module):
         projector_dim = getattr(configs, 'projector_dim', 768)
 
         # Feature extractor parameters
+        self.use_projector = getattr(configs, 'use_projector', 0)  # 1: use projector, 0: original PatchTST
         feature_extractor = getattr(configs, 'feature_extractor', 'tivit')
         mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
 
@@ -81,40 +82,45 @@ class Model(nn.Module):
         self.mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
         self.mantis_output_dim = 256  # Mantis default output dimension
 
-        # Build feature extractor (TiViT or Mantis)
+        # Build feature extractor (TiViT or Mantis) only when use_projector=1
         self.tivit = None
         self.mantis = None
 
-        if self.feature_extractor == 'tivit':
-            # Build TiViT
-            full_seq_len = context_window + target_window
-            actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
-            self.tivit = get_tivit(
-                model_name=self.tivit_model_name,
-                model_layer=self.tivit_layer,
-                aggregation=self.tivit_aggregation,
-                stride=self.tivit_stride,
-                patch_size=actual_patch_size,
-                device=self.device,
-                pretrained=self.tivit_pretrained,
-            )
-            self.tivit.eval()
-            for param in self.tivit.parameters():
-                param.requires_grad = False
-        elif self.feature_extractor == 'mantis':
-            if not HAS_MANTIS:
-                raise ImportError("mantis-tsfm is not installed. Please install it with: pip install mantis-tsfm")
-            # Build Mantis
-            network = Mantis8M(device=self.device)
-            network = network.from_pretrained(self.mantis_pretrained)
-            self.mantis = MantisTrainer(device=self.device, network=network)
-            # Register network as sub-module so its params are included in model.parameters()
-            self.add_module('mantis_network', self.mantis.network)
-            self.mantis.network.eval()
-            for param in self.mantis.network.parameters():
-                param.requires_grad = False
+        if self.use_projector:
+            if self.feature_extractor == 'tivit':
+                # Build TiViT
+                full_seq_len = context_window + target_window
+                actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)
+                self.tivit = get_tivit(
+                    model_name=self.tivit_model_name,
+                    model_layer=self.tivit_layer,
+                    aggregation=self.tivit_aggregation,
+                    stride=self.tivit_stride,
+                    patch_size=actual_patch_size,
+                    device=self.device,
+                    pretrained=self.tivit_pretrained,
+                )
+                self.tivit.eval()
+                for param in self.tivit.parameters():
+                    param.requires_grad = False
+            elif self.feature_extractor == 'mantis':
+                if not HAS_MANTIS:
+                    raise ImportError("mantis-tsfm is not installed. Please install it with: pip install mantis-tsfm")
+                # Build Mantis
+                network = Mantis8M(device=self.device)
+                network = network.from_pretrained(self.mantis_pretrained)
+                self.mantis = MantisTrainer(device=self.device, network=network)
+                # Register network as sub-module so its params are included in model.parameters()
+                self.add_module('mantis_network', self.mantis.network)
+                self.mantis.network.eval()
+                for param in self.mantis.network.parameters():
+                    param.requires_grad = False
+            else:
+                raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit' or 'mantis'.")
         else:
-            raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit' or 'mantis'.")
+            # use_projector=0: original PatchTST, no TiViT/Mantis
+            pass
+            pass
 
         # model
         self.decomposition = decomposition
@@ -127,7 +133,8 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
             self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                   n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -135,7 +142,8 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
         else:
             self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                   max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
@@ -144,7 +152,8 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim, verbose=verbose, **kwargs)
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
     
     
     def forward(self, x, target=None, return_projector=False):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
@@ -205,4 +214,7 @@ class Model(nn.Module):
                         zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
                         zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)  # (bs, nvars, 256)
 
-            return output, zs, zs_tilde
+            if return_projector:
+                return output, zs, zs_tilde
+            else:
+                return output, zs

@@ -45,7 +45,19 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/PatchTST/weather.sh
+sh ./scripts/etth1.sh          # PatchTST + Mantis (use_projector=1)
+sh ./scripts/etth1_noprojector.sh  # Original PatchTST (use_projector=0)
+```
+
+#### PatchTST + Mantis Feature Alignment (Default)
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --use_projector 1 --feature_extractor mantis \
+  --mantis_pretrained ./Mantis --lambda_contrastive 0.5
 ```
 
 #### PatchTST + TiViT Feature Alignment
@@ -55,19 +67,19 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor tivit --projector_dim 768 --lambda_contrastive 0.5 \
+  --use_projector 1 --feature_extractor tivit --projector_dim 768 \
+  --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 
-#### PatchTST + Mantis Feature Alignment
+#### Original PatchTST (without projector)
 ```bash
 python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor mantis --mantis_pretrained ./Mantis \
-  --lambda_contrastive 0.5
+  --use_projector 0
 ```
 
 ## Architecture
@@ -105,11 +117,12 @@ The model returns a tuple `(output, zs)`:
 | `n_heads` | Number of attention heads | 16 |
 | `e_layers` | Number of encoder layers | 4 |
 | `encoder_depth` | Which encoder layer to extract intermediate output | 2 |
+| `use_projector` | Use MLP projector and feature extractor (1: use, 0: original PatchTST) | 1 |
 | `projector_dim` | MLP projector output dimension (768 for TiViT, 256 for Mantis) | 768 |
-| `feature_extractor` | Feature extractor: `tivit` or `mantis` | `tivit` |
+| `feature_extractor` | Feature extractor: `tivit` or `mantis` | `mantis` |
 | `lambda_contrastive` | Weight for contrastive loss | 0.5 |
 
-Note: Projector and feature extractor are always created. Training uses `return_projector=True` to compute contrastive loss. When using Mantis, `projector_dim` is automatically set to 256.
+Note: Projector and feature extractor are only created when `use_projector=1`. Training uses `return_projector=True` to compute contrastive loss. When using Mantis, `projector_dim` is automatically set to 256.
 
 ## Feature Alignment
 
@@ -176,7 +189,9 @@ PatchTST/
 ├── exp/
 │   └── exp_main.py             # Training with feature alignment
 ├── data_provider/              # Data loading
-├── scripts/PatchTST/           # Training scripts
+├── scripts/                    # Training scripts
+│   ├── etth1.sh                 # PatchTST + Mantis
+│   └── etth1_noprojector.sh    # Original PatchTST
 ├── diagnose_results/          # Debug scripts
 ├── dataset/                   # Place downloaded CSV files here
 ├── open_clip/                 # Pre-trained CLIP model weights
