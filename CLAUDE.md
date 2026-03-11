@@ -317,6 +317,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 
 - `diagnose_results/debug_shapes.py` - Debug script to check tensor shapes during training
 - `diagnose_results/compare_models.py` - Compare our implementation with original PatchTST to verify numerical consistency (forward pass and gradients)
+- `diagnose_results/compare_loss.py` - Compare loss curves between PatchTST and PatchTST_REPA experiments
 
 ## Bug Fixes
 
