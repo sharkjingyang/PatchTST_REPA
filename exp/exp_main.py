@@ -208,6 +208,11 @@ class Exp_Main(Exp_Basic):
 
         time_now = time.time()
 
+        # Record loss per step for plotting
+        loss_per_step = []
+        loss_mse_per_step = []
+        loss_contrastive_per_step = []
+
         train_steps = len(train_loader)
         if self.args.save_checkpoint:
             early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
@@ -270,6 +275,10 @@ class Exp_Main(Exp_Basic):
                         batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
+                        # Record loss per step
+                        loss_per_step.append(loss.item())
+                        loss_mse_per_step.append(loss.item())  # Same as total in AMP mode
+                        loss_contrastive_per_step.append(0.0)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
                         # Check if use_projector is enabled
@@ -305,6 +314,11 @@ class Exp_Main(Exp_Basic):
                     train_loss.append(loss.item())
                     train_mse_loss.append(mse_loss.item())
                     train_contrastive_loss.append(contrastive_loss.item())
+
+                    # Record loss per step
+                    loss_per_step.append(loss.item())
+                    loss_mse_per_step.append(mse_loss.item())
+                    loss_contrastive_per_step.append(contrastive_loss.item())
 
                 if (i + 1) % 100 == 0:
                     # Only print detailed loss for PatchTST models with contrastive loss
@@ -364,6 +378,17 @@ class Exp_Main(Exp_Basic):
         if self.args.save_checkpoint:
             best_model_path = path + '/' + 'checkpoint.pth'
             self.model.load_state_dict(torch.load(best_model_path))
+
+        # Save loss per step for plotting (in results folder)
+        results_folder = './results/' + setting + '/'
+        if not os.path.exists(results_folder):
+            os.makedirs(results_folder)
+        np.savez(results_folder + 'loss_per_step.npz',
+                  steps=np.arange(len(loss_per_step)),
+                  loss=np.array(loss_per_step),
+                  loss_mse=np.array(loss_mse_per_step),
+                  loss_contrastive=np.array(loss_contrastive_per_step))
+        print(f"Loss curve saved to {results_folder}loss_per_step.npz")
 
         return self.model
 
