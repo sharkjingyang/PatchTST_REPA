@@ -33,6 +33,9 @@ class Exp_Main(Exp_Basic):
 
         model = self.model
 
+        # Get use_projector setting
+        use_projector = getattr(self.args, 'use_projector', 0)
+
         # Get TiViT params
         tivit_total = 0
         if hasattr(model, 'tivit') and model.tivit is not None:
@@ -48,32 +51,38 @@ class Exp_Main(Exp_Basic):
         all_total = sum(p.numel() for p in model.parameters())
         all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        # Get feature extractor type
-        feature_extractor = getattr(model, 'feature_extractor', 'tivit')
+        if use_projector:
+            # Get feature extractor type
+            feature_extractor = getattr(model, 'feature_extractor', 'tivit')
 
-        # Exclude feature extractor from total
-        total = all_total - tivit_total - mantis_total
-        # Trainable excluding feature extractor (since they're frozen anyway)
-        trainable_excl = all_trainable - tivit_total - mantis_total
+            # Exclude feature extractor from total
+            total = all_total - tivit_total - mantis_total
+            # Trainable excluding feature extractor (since they're frozen anyway)
+            trainable_excl = all_trainable - tivit_total - mantis_total
 
-        print(f"Total parameters (all):     {all_total:,}")
-        print(f"Total parameters (excl. {feature_extractor}): {total:,}")
-        print(f"Trainable parameters:       {all_trainable:,}")
-        print(f"Trainable (excl. {feature_extractor}): {trainable_excl:,}")
+            print(f"Total parameters (all):     {all_total:,}")
+            print(f"Total parameters (excl. {feature_extractor}): {total:,}")
+            print(f"Trainable parameters:       {all_trainable:,}")
+            print(f"Trainable (excl. {feature_extractor}): {trainable_excl:,}")
 
-        # Projector params
-        if hasattr(model, 'model') and hasattr(model.model, 'projector'):
-            proj_total = sum(p.numel() for p in model.model.projector.parameters())
-            print(f"\nProjector parameters: {proj_total:,}")
-        elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
-            proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
-            print(f"\nProjector parameters (2): {proj_total:,}")
+            # Projector params
+            if hasattr(model, 'model') and hasattr(model.model, 'projector'):
+                proj_total = sum(p.numel() for p in model.model.projector.parameters())
+                print(f"\nProjector parameters: {proj_total:,}")
+            elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
+                proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
+                print(f"\nProjector parameters (2): {proj_total:,}")
 
-        # Feature extractor params
-        if feature_extractor == 'tivit' and tivit_total > 0:
-            print(f"\nTiViT parameters (frozen, excluded): {tivit_total:,}")
-        elif feature_extractor == 'mantis' and mantis_total > 0:
-            print(f"\nMantis parameters (frozen, excluded): {mantis_total:,}")
+            # Feature extractor params
+            if feature_extractor == 'tivit' and tivit_total > 0:
+                print(f"\nTiViT parameters (frozen, excluded): {tivit_total:,}")
+            elif feature_extractor == 'mantis' and mantis_total > 0:
+                print(f"\nMantis parameters (frozen, excluded): {mantis_total:,}")
+        else:
+            # Original PatchTST without projector
+            print(f"Total parameters:            {all_total:,}")
+            print(f"Trainable parameters:       {all_trainable:,}")
+            print("\nNote: Original PatchTST (use_projector=0)")
 
         print("=" * 60)
 
@@ -149,7 +158,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, _, _ = self.model(batch_x)  # Get final output only
+                            outputs = self.model(batch_x)[0]  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -157,7 +166,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        outputs, _, _ = self.model(batch_x)  # Get final output only
+                        outputs = self.model(batch_x)[0]  # Get final output only
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -237,7 +246,12 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, _, _ = self.model(batch_x, batch_y)  # Get final output
+                            # Check if use_projector is enabled
+                            use_projector = getattr(self.args, 'use_projector', 0)
+                            if use_projector:
+                                outputs, _, _ = self.model(batch_x, batch_y, return_projector=True)  # Get final output + features
+                            else:
+                                outputs = self.model(batch_x, batch_y, return_projector=False)[0]  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -376,7 +390,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, _, _ = self.model(batch_x)  # Get final output only
+                            outputs = self.model(batch_x)[0]  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -384,7 +398,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, _, _ = self.model(batch_x)  # Get final output only
+                        outputs = self.model(batch_x)[0]  # Get final output only
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -467,7 +481,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            outputs, _, _ = self.model(batch_x)
+                            outputs = self.model(batch_x)[0]  # Get final output only
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -475,7 +489,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        outputs, _, _ = self.model(batch_x)
+                        outputs = self.model(batch_x)[0]  # Get final output only
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
