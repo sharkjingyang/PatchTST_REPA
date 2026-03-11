@@ -87,7 +87,7 @@ class Model(nn.Module):
         self.mantis = None
 
         if self.use_projector:
-            if self.feature_extractor == 'mantis':
+            if self.feature_extractor == 'tivit':
                 # Build TiViT
                 full_seq_len = context_window + target_window
                 actual_patch_size = get_patch_size(self.tivit_patch_size, full_seq_len)

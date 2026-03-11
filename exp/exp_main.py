@@ -390,6 +390,34 @@ class Exp_Main(Exp_Basic):
                   loss_contrastive=np.array(loss_contrastive_per_step))
         print(f"Loss curve saved to {results_folder}loss_per_step.npz")
 
+        # Plot and save loss curves
+        steps = np.arange(len(loss_per_step))
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+        axes[0].plot(steps, loss_per_step, 'b-', linewidth=0.5)
+        axes[0].set_xlabel('Steps')
+        axes[0].set_ylabel('Total Loss')
+        axes[0].set_title('Total Loss')
+        axes[0].grid(True, alpha=0.3)
+
+        axes[1].plot(steps, loss_mse_per_step, 'g-', linewidth=0.5)
+        axes[1].set_xlabel('Steps')
+        axes[1].set_ylabel('MSE Loss')
+        axes[1].set_title('MSE Loss')
+        axes[1].grid(True, alpha=0.3)
+
+        axes[2].plot(steps, loss_contrastive_per_step, 'r-', linewidth=0.5)
+        axes[2].set_xlabel('Steps')
+        axes[2].set_ylabel('Contrastive Loss')
+        axes[2].set_title('Contrastive Loss')
+        axes[2].grid(True, alpha=0.3)
+
+        plt.suptitle(f'Loss Curves - {setting}')
+        plt.tight_layout()
+        plt.savefig(results_folder + 'loss_curve.png', dpi=150)
+        plt.close()
+        print(f"Loss curve plot saved to {results_folder}loss_curve.png")
+
         return self.model
 
     def test(self, setting, test=0):
