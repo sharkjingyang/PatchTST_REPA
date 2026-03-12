@@ -130,27 +130,41 @@ def count_parameters(model):
     total = trainable + non_trainable
     return trainable, non_trainable, total
 
-# Total model parameters (excluding TiViT)
-# Calculate all params, then subtract TiViT params
+# Total model parameters (excluding feature extractors)
+# Calculate all params, then subtract TiViT/Mantis/Chronos params
 all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 all_non_trainable = sum(p.numel() for p in model.parameters() if not p.requires_grad)
 all_total = all_trainable + all_non_trainable
 
-# Get TiViT params
+# Get feature extractor params (TiViT, Mantis, Chronos - all are frozen)
 tivit_total = 0
 tivit_non_trainable = 0
+mantis_total = 0
+mantis_non_trainable = 0
+chronos_total = 0
+chronos_non_trainable = 0
+
 if hasattr(model, 'tivit') and model.tivit is not None:
     tivit_total = sum(p.numel() for p in model.tivit.parameters())
     tivit_non_trainable = sum(p.numel() for p in model.tivit.parameters() if not p.requires_grad)
 
-# Exclude TiViT from total
-total = all_total - tivit_total
-trainable = all_trainable  # TiViT is non-trainable
-non_trainable = all_non_trainable - tivit_non_trainable
+if hasattr(model, 'mantis') and model.mantis is not None:
+    # Mantis stores network in mantis_network
+    mantis_total = sum(p.numel() for p in model.mantis_network.parameters())
+    mantis_non_trainable = sum(p.numel() for p in model.mantis_network.parameters() if not p.requires_grad)
 
-print(f"Total parameters (excl. TiViT): {total:,}")
-print(f"Trainable parameters:            {trainable:,}")
-print(f"Non-trainable parameters:        {non_trainable:,}")
+if hasattr(model, 'chronos') and model.chronos is not None:
+    chronos_total = sum(p.numel() for p in model.chronos.model.parameters())
+    chronos_non_trainable = sum(p.numel() for p in model.chronos.model.parameters() if not p.requires_grad)
+
+# Exclude feature extractors from total
+total = all_total - tivit_total - mantis_total - chronos_total
+trainable = all_trainable  # Feature extractors are non-trainable
+non_trainable = all_non_trainable - tivit_non_trainable - mantis_non_trainable - chronos_non_trainable
+
+print(f"Total parameters (excl. feature extractors): {total:,}")
+print(f"Trainable parameters:                         {trainable:,}")
+print(f"Non-trainable parameters:                     {non_trainable:,}")
 
 # Projector parameters (if exists)
 if hasattr(model, 'model') and hasattr(model.model, 'projector'):
@@ -173,12 +187,21 @@ elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
 else:
     print("\nNo projector found in model.")
 
-# TiViT parameters (frozen)
+# Feature extractor parameters (frozen)
 if hasattr(model, 'tivit') and model.tivit is not None:
-    tivit_trainable, tivit_non_trainable, tivit_total = count_parameters(model.tivit)
     print(f"\nTiViT parameters (frozen, excluded from total):")
     print(f"  Total:         {tivit_total:,}")
     print(f"  Non-trainable: {tivit_non_trainable:,}")
+
+if hasattr(model, 'mantis') and model.mantis is not None:
+    print(f"\nMantis parameters (frozen, excluded from total):")
+    print(f"  Total:         {mantis_total:,}")
+    print(f"  Non-trainable: {mantis_non_trainable:,}")
+
+if hasattr(model, 'chronos') and model.chronos is not None:
+    print(f"\nChronos parameters (frozen, excluded from total):")
+    print(f"  Total:         {chronos_total:,}")
+    print(f"  Non-trainable: {chronos_non_trainable:,}")
 
 print("\n" + "=" * 60)
 print("Summary:")
