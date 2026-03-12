@@ -21,6 +21,13 @@ try:
 except ImportError:
     HAS_MANTIS = False
 
+# Try to import Chronos
+try:
+    from chronos import Chronos2Pipeline
+    HAS_CHRONOS = True
+except ImportError:
+    HAS_CHRONOS = False
+
 
 class Model(nn.Module):
     def __init__(self, configs, max_seq_len:Optional[int]=1024, d_k:Optional[int]=None, d_v:Optional[int]=None, norm:str='BatchNorm', attn_dropout:float=0., 
@@ -67,6 +74,9 @@ class Model(nn.Module):
         if feature_extractor == 'mantis':
             projector_dim = 256  # Mantis output dimension
             print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
+        elif feature_extractor == 'chronos':
+            projector_dim = 768  # Chronos2 output dimension
+            print(f"Using Chronos feature extractor, auto-adjusting projector_dim to {projector_dim}")
         self.feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -82,9 +92,14 @@ class Model(nn.Module):
         self.mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
         self.mantis_output_dim = 256  # Mantis default output dimension
 
-        # Build feature extractor (TiViT or Mantis) only when use_projector=1
+        # Chronos parameters
+        self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
+        self.chronos_output_dim = 768  # Chronos2 default output dimension
+
+        # Build feature extractor (TiViT, Mantis or Chronos) only when use_projector=1
         self.tivit = None
         self.mantis = None
+        self.chronos = None
 
         if self.use_projector:
             if self.feature_extractor == 'tivit':
@@ -115,8 +130,16 @@ class Model(nn.Module):
                 self.mantis.network.eval()
                 for param in self.mantis.network.parameters():
                     param.requires_grad = False
+            elif self.feature_extractor == 'chronos':
+                if not HAS_CHRONOS:
+                    raise ImportError("chronos is not installed. Please install it with: pip install chronos-forecasting")
+                # Build Chronos
+                self.chronos = Chronos2Pipeline.from_pretrained(self.chronos_pretrained, device_map=self.device)
+                self.chronos.model.eval()
+                for param in self.chronos.model.parameters():
+                    param.requires_grad = False
             else:
-                raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'mantis' or 'mantis'.")
+                raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit', 'mantis' or 'chronos'.")
         else:
             # use_projector=0: original PatchTST, no TiViT/Mantis
             pass
@@ -191,7 +214,7 @@ class Model(nn.Module):
                     # Use only the prediction part: target[:, -pred_len:, :]
                     target_pred = target[:, -self.pred_len:, :]  # (bs, pred_len, nvars)
 
-                    if self.feature_extractor == 'mantis' and self.tivit is not None:
+                    if self.feature_extractor == 'tivit' and self.tivit is not None:
                         # TiViT extraction
                         # target_pred: (bs, pred_len, nvars)
                         # TiViT expects input: (bs, seq_len, 1) for single channel
@@ -220,6 +243,23 @@ class Model(nn.Module):
                         # Convert back to tensor and reshape
                         zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
                         zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)  # (bs, nvars, 256)
+                    elif self.feature_extractor == 'chronos' and self.chronos is not None:
+                        # Chronos extraction
+                        # Chronos embed expects: (B, C, seq_len)
+                        # target_pred: (bs, pred_len, nvars) -> (bs, nvars, pred_len)
+                        target_perm = target_pred.permute(0, 2, 1)  # (bs, nvars, pred_len)
+                        # Get embeddings: list of (n_variates, num_patches, d_model)
+                        embeddings, loc_scales = self.chronos.embed(target_perm)
+                        # Extract patch embeddings (exclude REG token and output patch)
+                        # Each embedding: (n_variates, num_patches, 768)
+                        patch_embeddings = []
+                        for emb in embeddings:
+                            num_patches = emb.shape[1] - 2  # subtract REG token and output patch
+                            patch_emb = emb[:, :num_patches, :]  # (n_variates, num_patches, 768)
+                            # Mean pool over patches: (n_variates, 768)
+                            patch_emb_mean = patch_emb.mean(dim=1)
+                            patch_embeddings.append(patch_emb_mean)
+                        zs_tilde = torch.stack(patch_embeddings, dim=0)  # (bs, nvars, 768)
 
             if return_projector:
                 return output, zs, zs_tilde

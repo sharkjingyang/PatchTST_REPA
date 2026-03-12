@@ -36,10 +36,10 @@ parser.add_argument('--kernel_size', type=int, default=25)
 parser.add_argument('--individual', type=int, default=0)
 parser.add_argument('--encoder_depth', type=int, default=2)
 parser.add_argument('--use_projector', type=int, default=1)
-parser.add_argument('--feature_extractor', type=str, default='mantis')
+parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'])
 parser.add_argument('--projector_dim', type=int, default=768)
 
-args = parser.parse_args([])
+args = parser.parse_args()
 
 # Set device
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -49,7 +49,10 @@ print(f"Using device: {device}")
 model = PatchTST.Model(args).float().to(device)
 model.eval()
 
-print(f"\nModel has TiViT: {model.tivit is not None}")
+print(f"\nFeature extractor: {args.feature_extractor}")
+print(f"Model has TiViT: {model.tivit is not None}")
+print(f"Model has Mantis: {model.mantis is not None}")
+print(f"Model has Chronos: {model.chronos is not None}")
 
 # Create fake batch data
 batch_size = 32

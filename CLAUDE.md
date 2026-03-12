@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an extended implementation of PatchTST: "A Time Series is Worth 64 Words: Long-term Forecasting with Transformers" (ICLR 2023). It uses a patch-based approach for time series forecasting with Transformer architectures.
 
-This project extends PatchTST with feature alignment using contrastive learning. Supports two feature extractors: **TiViT** (Time series to ViT) and **Mantis** (from mantis-tsfm). The MLP projector maps PatchTST's intermediate encoder features to align with extracted features from the target sequence.
+This project extends PatchTST with feature alignment using contrastive learning. Supports three feature extractors: **TiViT** (Time series to ViT), **Mantis** (from mantis-tsfm), and **Chronos2** (from Amazon). The MLP projector maps PatchTST's intermediate encoder features to align with extracted features from the target sequence.
 
 ## Common Commands
 
@@ -50,6 +50,19 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with TiViT-extracted features.
+
+### Running with PatchTST_REPA + Chronos Feature Alignment
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor chronos --projector_dim 768 \
+  --lambda_contrastive 0.5 \
+  --chronos_pretrained ./Chronos2
+```
+This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Chronos2-extracted features.
 
 ### Running Original PatchTST (without projector)
 ```bash
@@ -100,9 +113,9 @@ Input (Batch, Input Length, Channels)
 - When `use_projector=1` and `return_projector=True`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
 - `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 4), after MLP projector
-- `zs_tilde`: Feature extractor (TiViT/Mantis) extracted features from target sequence
+- `zs_tilde`: Feature extractor (TiViT/Mantis/Chronos) extracted features from target sequence
 
-### Feature Alignment (TiViT or Mantis)
+### Feature Alignment (TiViT, Mantis or Chronos)
 
 The system combines PatchTST with a feature extractor for enhanced feature representation. Supports two extractors:
 
@@ -182,8 +195,9 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `projector_dim`: MLP projector output dimension (default: 768, auto-adjusts to 256 when using Mantis)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
 - `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
-- `feature_extractor`: Feature extractor for contrastive loss: `tivit` or `mantis` (default: `mantis`)
+- `feature_extractor`: Feature extractor for contrastive loss: `tivit`, `mantis` or `chronos` (default: `mantis`)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
+- `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
 
 Note: Projector and feature extractor are only created when `use_projector=1`. Default is `use_projector=0` (original PatchTST). Use `return_projector=True` in training to compute contrastive loss (vali/test will skip feature extractor inference for speed).
 
@@ -211,6 +225,7 @@ PatchTST/
 ├── dataset/                    # Place downloaded CSV files here
 ├── open_clip/                  # Pre-trained CLIP model weights
 ├── Mantis/                     # Pre-trained Mantis model weights
+├── Chronos2/                   # Pre-trained Chronos2 model weights
 ├── README.md
 ├── CLAUDE.md
 └── LICENSE
@@ -302,12 +317,38 @@ Mantis module uses Mantis8M from mantis-tsfm for feature extraction.
 
 ### Key Differences from TiViT
 
-| Feature | TiViT | Mantis |
-|---------|-------|--------|
-| Output dimension | 768 | 256 |
-| Input resize | Uses ViT native | Interpolate to 512 |
-| Model | CLIP ViT-B/16 | Mantis8M |
-| Pretrained path | `./open_clip/` | `./Mantis/` |
+| Feature | TiViT | Mantis | Chronos |
+|---------|-------|--------|---------|
+| Output dimension | 768 | 256 | 768 |
+| Input resize | Uses ViT native | Interpolate to 512 | Native (patched) |
+| Model | CLIP ViT-B/16 | Mantis8M | Chronos2 (T5-based) |
+| Pretrained path | `./open_clip/` | `./Mantis/` | `./Chronos2/` |
+
+## Chronos (Time series via Chronos2)
+
+Chronos module uses Chronos2 from Amazon for feature extraction.
+
+### Usage in PatchTST
+
+```python
+# Chronos is automatically created in models/PatchTST.py when feature_extractor='chronos'
+# The feature extraction is done in PatchTST.forward() when return_projector=True
+```
+
+### Input/Output Shapes
+
+- **Input**: `(batch, pred_len, nvars)` - uses only prediction part, permuted to `(batch, nvars, pred_len)`
+- **Chronos embed**: Returns list of embeddings per sample
+- **Each embedding**: `(n_variates, num_patches, 768)` - includes REG token and output patch
+- **Post-processing**: Remove REG token and output patch, then mean pool over patches
+- **Output**: `(batch, nvars, 768)` - 768-dimensional features
+
+### Key Features
+
+- Uses T5-based transformer architecture
+- 12 layers, 12 heads, 768 hidden dimensions
+- Native patch-based processing (patch_size=16)
+- Pre-trained on multiple time series datasets
 
 ## Datasets
 

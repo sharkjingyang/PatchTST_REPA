@@ -465,6 +465,7 @@ $RECYCLE.BIN/
 # Pre-trained model weights (download separately)
 Mantis/
 open_clip/
+Chronos2/
 
 # Reference PatchTST implementation (for comparison only)
 PatchTST-main/
