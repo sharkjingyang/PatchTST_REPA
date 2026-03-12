@@ -75,9 +75,21 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1_REPA.sh     # PatchTST_REPA: PatchTST + Mantis feature alignment
-sh ./scripts/etth1_PatchTST.sh # PatchTST: Original PatchTST (baseline)
+sh ./scripts/etth1_PatchTST.sh   # Original PatchTST (baseline)
+sh ./scripts/etth1_mantis.sh      # PatchTST_REPA: PatchTST + Mantis feature alignment
+sh ./scripts/etth1_Chronos2.sh   # PatchTST_REPA: PatchTST + Chronos2 feature alignment
 ```
+
+### Training Log Format
+```
+***Epoch: 1 | cost time: 123.457 | lr: 1.2346e-04  <- best model updated
+Epoch: 2 | cost time: 123.457 | lr: 1.2346e-04     <- normal
+Steps: 50 | Train Loss: 0.1234567 | Train MSE: 0.1000000 | Train Contrastive: 0.0234567 | Vali Loss: 0.1500000 | Test Loss: 0.1600000
+```
+
+- `***` prefix indicates best model was updated in this epoch
+- `cost time`: 3 decimal places
+- `lr`: scientific notation with 4 decimal places
 
 ## Architecture
 
@@ -190,8 +202,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `encoder_depth`: Which encoder layer to extract intermediate output (default: 4)
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
-- `save_checkpoint`: Whether to save model checkpoint (1: save, 0: not save, default: 0)
-- `use_projector`: Use MLP projector and feature extractor (1: use, 0: original PatchTST, default: 1)
+- `use_projector`: Use MLP projector and feature extractor (1: use, 0: original PatchTST, default: auto-set based on model name)
 - `projector_dim`: MLP projector output dimension (default: 768, auto-adjusts to 256 when using Mantis)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
 - `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
@@ -199,7 +210,11 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
 
-Note: Projector and feature extractor are only created when `use_projector=1`. Default is `use_projector=0` (original PatchTST). Use `return_projector=True` in training to compute contrastive loss (vali/test will skip feature extractor inference for speed).
+Note:
+- Best model is automatically saved in memory during training and loaded for test
+- Projector and feature extractor are only created when `use_projector=1` or when using `PatchTST_REPA` model
+- `PatchTST` model automatically sets `use_projector=0` (original PatchTST)
+- `PatchTST_REPA` model automatically sets `use_projector=1` (with feature alignment)
 
 ## Directory Structure
 
@@ -213,12 +228,13 @@ PatchTST/
 │   ├── SelfAttention_Family.py
 │   └── Tivit.py               # TiViT: Time series to ViT embedding
 ├── models/
-│   └── PatchTST.py            # PatchTST model (includes TiViT/Mantis)
+│   └── PatchTST.py            # PatchTST model (includes TiViT/Mantis/Chronos)
 ├── exp/                        # Experiment classes
 ├── data_provider/              # Data loading
 ├── scripts/                    # Training scripts
-│   ├── etth1_REPA.sh            # PatchTST + Mantis feature alignment
-│   └── etth1_PatchTST.sh       # Original PatchTST (baseline)
+│   ├── etth1_PatchTST.sh      # Original PatchTST (baseline)
+│   ├── etth1_mantis.sh        # PatchTST + Mantis feature alignment
+│   └── etth1_Chronos2.sh      # PatchTST + Chronos2 feature alignment
 ├── diagnose_results/           # Debug scripts
 ├── Formers/                    # Baseline models
 ├── utils/                      # Utilities
@@ -365,9 +381,12 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Projector input dimension**: Fixed MLP projector input dimension from `head_nf` (d_model * patch_num) to `d_model` in `layers/PatchTST_backbone.py`
 - **TiViT moved to PatchTST model**: TiViT creation moved from `exp/exp_main.py` to `models/PatchTST.py` for better encapsulation
 - **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
+- **Chronos support**: Added Chronos2 as third feature extractor option
 - **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment
 - **use_projector switch**: Added `use_projector` parameter to enable/disable projector and feature extractors for baseline comparison (use_projector=0: original PatchTST, use_projector=1: with feature alignment)
 - **Original PatchTST compatibility**: When `use_projector=0`, the model now behaves identically to original PatchTST:
   - TSTiEncoder only computes final output (no intermediate extraction)
   - PatchTST_backbone.forward returns only `output` (not tuple)
   - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)
+- **Auto-set use_projector**: `PatchTST` model auto-sets `use_projector=0`, `PatchTST_REPA` auto-sets `use_projector=1`
+- **Best model in memory**: Best model is now saved in memory during training and automatically loaded for test (no checkpoint file saved by default)
