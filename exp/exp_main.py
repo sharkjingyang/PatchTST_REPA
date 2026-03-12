@@ -123,12 +123,18 @@ class Exp_Main(Exp_Basic):
         对每个 nvar 单独计算 cosine similarity，然后求和。
 
         Args:
-            zs_project: (bs, nvars, d_model) or (bs, nvars, projector_dim) - PatchTST projected features
-            zs_tilde: (bs, nvars, d_vit) - TiViT features
+            zs_project: (bs, nvars, patch_num, d_model) or (bs, nvars, patch_num, projector_dim) - PatchTST projected features
+            zs_tilde: (bs, nvars, num_patches, d_vit) - TiViT/Mantis/Chronos features
 
         Returns:
             loss: scalar contrastive loss
         """
+        # Mean pooling over patch dimension first
+        # zs_project: (bs, nvars, patch_num, d) -> (bs, nvars, d)
+        # zs_tilde: (bs, nvars, num_patches, d) -> (bs, nvars, d)
+        zs_project = zs_project.mean(dim=2)
+        zs_tilde = zs_tilde.mean(dim=2)
+
         # Normalize features
         zs_project = F.normalize(zs_project, dim=-1)
         zs_tilde = F.normalize(zs_tilde, dim=-1)
