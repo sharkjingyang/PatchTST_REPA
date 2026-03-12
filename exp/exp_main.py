@@ -135,12 +135,18 @@ class Exp_Main(Exp_Basic):
         if zs_tilde.dim() == 4 and contractive_type == 'patch_wise':
             # Chronos with patch_wise: interpolate zs_project to match zs_tilde's patch_num
             target_patch_num = zs_tilde.shape[2]
-            zs_project = F.interpolate(
-                zs_project.permute(0, 1, 3, 2),  # (bs, nvars, d, patch_num)
+            # Reshape to 3D for F.interpolate: (bs, nvars, d, patch_num) -> (bs*nvars, d, patch_num)
+            bs, nvars, patch_num, d = zs_project.shape
+            zs_project_3d = zs_project.permute(0, 1, 3, 2).reshape(bs * nvars, d, patch_num)
+            # Interpolate: (bs*nvars, d, patch_num) -> (bs*nvars, d, target_patch_num)
+            zs_project_interp = F.interpolate(
+                zs_project_3d,
                 size=target_patch_num,
                 mode='linear',
                 align_corners=False
-            ).permute(0, 1, 3, 2)  # (bs, nvars, target_patch_num, d)
+            )
+            # Reshape back: (bs*nvars, d, target_patch_num) -> (bs, nvars, d, target_patch_num)
+            zs_project = zs_project_interp.reshape(bs, nvars, d, target_patch_num).permute(0, 1, 3, 2)  # (bs, nvars, target_patch_num, d)
 
             # Normalize features
             zs_project = F.normalize(zs_project, dim=-1)
