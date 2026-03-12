@@ -44,6 +44,5 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --save_checkpoint 0 \
   --use_projector $use_projector \
   >logs/LongForecasting/${script_name}_${pred_len}.log

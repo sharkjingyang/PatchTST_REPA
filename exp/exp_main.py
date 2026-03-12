@@ -202,11 +202,6 @@ class Exp_Main(Exp_Basic):
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
 
-        path = os.path.join(self.args.checkpoints, setting)
-        if self.args.save_checkpoint:
-            if not os.path.exists(path):
-                os.makedirs(path)
-
         time_now = time.time()
 
         # Record loss per step for plotting
@@ -215,13 +210,8 @@ class Exp_Main(Exp_Basic):
         loss_contrastive_per_step = []
 
         train_steps = len(train_loader)
-        if self.args.save_checkpoint:
-            early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
-        else:
-            early_stopping = None
-            best_val_loss = float('inf')
-            no_improve_count = 0
-            best_model_state = None  # Save best model state for test
+        early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
+        best_model_state = None  # Save best model state for test
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -358,9 +348,8 @@ class Exp_Main(Exp_Basic):
             is_best_update = vali_loss < best_val_loss
             if is_best_update:
                 best_val_loss = vali_loss
-                if not self.args.save_checkpoint:
-                    # Save best model state for later test
-                    best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                # Save best model state for later test
+                best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
 
             # Get current learning rate
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
@@ -373,13 +362,10 @@ class Exp_Main(Exp_Basic):
             print("Steps: {0} | Train Loss: {1:.7f} | Train MSE: {2:.7f} | Train Contrastive: {3:.7f} | Vali Loss: {4:.7f} | Test Loss: {5:.7f}".format(
                 train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
 
-            if self.args.save_checkpoint:
-                early_stopping(vali_loss, self.model, path)
-                if early_stopping.early_stop:
-                    print("Early stopping")
-                    break
-            else:
-                # Track best val loss manually for early stopping
+            early_stopping(vali_loss, self.model, None)
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
                 if vali_loss < best_val_loss:
                     best_val_loss = vali_loss
                     no_improve_count = 0
@@ -392,11 +378,8 @@ class Exp_Main(Exp_Basic):
             if self.args.lradj != 'TST':
                 adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
 
-        if self.args.save_checkpoint:
-            best_model_path = path + '/' + 'checkpoint.pth'
-            self.model.load_state_dict(torch.load(best_model_path))
-        elif best_model_state is not None:
-            # Load best model state when save_checkpoint=0
+        # Load best model for test
+        if best_model_state is not None:
             self.model.load_state_dict(best_model_state)
 
         # Save loss per step for plotting (in results folder)
