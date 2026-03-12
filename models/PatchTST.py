@@ -135,6 +135,8 @@ class Model(nn.Module):
                     raise ImportError("chronos is not installed. Please install it with: pip install chronos-forecasting")
                 # Build Chronos
                 self.chronos = Chronos2Pipeline.from_pretrained(self.chronos_pretrained, device_map=self.device)
+                # Register chronos.model as sub-module so its params are included in model.parameters()
+                self.add_module('chronos_model', self.chronos.model)
                 self.chronos.model.eval()
                 for param in self.chronos.model.parameters():
                     param.requires_grad = False

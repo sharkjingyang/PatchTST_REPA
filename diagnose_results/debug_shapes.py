@@ -144,9 +144,9 @@ if hasattr(model, 'tivit') and model.tivit is not None:
 elif hasattr(model, 'mantis') and model.mantis is not None:
     feature_extractor = 'Mantis'
     fe_total = sum(p.numel() for p in model.mantis_network.parameters())
-elif hasattr(model, 'chronos') and model.chronos is not None:
+elif hasattr(model, 'chronos_model') and model.chronos_model is not None:
     feature_extractor = 'Chronos'
-    fe_total = sum(p.numel() for p in model.chronos.model.parameters())
+    fe_total = sum(p.numel() for p in model.chronos_model.parameters())
 
 total_excl = all_total - fe_total
 print(f"Total parameters (all):              {all_total:,}")
