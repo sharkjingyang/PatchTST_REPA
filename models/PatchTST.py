@@ -287,14 +287,13 @@ class Model(nn.Module):
                         embeddings, loc_scales = self.chronos.embed(target_perm)
                         # Extract patch embeddings (exclude REG token and output patch)
                         # Each embedding: (n_variates, num_patches, 768)
+                        # No mean pooling - done in contrastive loss
                         patch_embeddings = []
                         for emb in embeddings:
                             num_patches = emb.shape[1] - 2  # subtract REG token and output patch
                             patch_emb = emb[:, :num_patches, :]  # (n_variates, num_patches, 768)
-                            # Mean pool over patches: (n_variates, 768)
-                            patch_emb_mean = patch_emb.mean(dim=1)
-                            patch_embeddings.append(patch_emb_mean)
-                        zs_tilde = torch.stack(patch_embeddings, dim=0)  # (bs, nvars, 768)
+                            patch_embeddings.append(patch_emb)
+                        zs_tilde = torch.stack(patch_embeddings, dim=0)  # (bs, nvars, num_patches, 768)
 
             if return_projector:
                 return output, zs, zs_tilde

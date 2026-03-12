@@ -94,12 +94,11 @@ class PatchTST_backbone(nn.Module):
         if self.use_projector:
             z, zs = self.backbone(z, return_intermediate=True)                               # z: [bs x nvars x d_model x patch_num], zs: intermediate output
 
-            # Apply MLP projector to zs
+            # Apply MLP projector to zs (no mean pooling - done in contrastive loss)
             bs, nvars, d_model, patch_num = zs.shape
             zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
             zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
             zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
-            zs_projected = zs_projected.mean(dim=2)                                        # [bs x nvars x projector_dim] - mean pooling over patches
         else:
             # Original PatchTST: no intermediate output needed
             z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
