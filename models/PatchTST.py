@@ -70,13 +70,14 @@ class Model(nn.Module):
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
 
-        # Auto-adjust projector_dim based on feature extractor
-        if feature_extractor == 'mantis':
-            projector_dim = 256  # Mantis output dimension
-            print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
-        elif feature_extractor == 'chronos':
-            projector_dim = 768  # Chronos2 output dimension
-            print(f"Using Chronos feature extractor, auto-adjusting projector_dim to {projector_dim}")
+        # Auto-adjust projector_dim based on feature extractor (only when use_projector=1)
+        if self.use_projector:
+            if feature_extractor == 'mantis':
+                projector_dim = 256  # Mantis output dimension
+                print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
+            elif feature_extractor == 'chronos':
+                projector_dim = 768  # Chronos2 output dimension
+                print(f"Using Chronos feature extractor, auto-adjusting projector_dim to {projector_dim}")
         self.feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -151,34 +152,66 @@ class Model(nn.Module):
         self.decomposition = decomposition
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
-            self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
-            self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
+            # Use projector only if use_projector=1
+            if self.use_projector:
+                self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+                self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+            else:
+                # Original PatchTST: no projector params
+                self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
+                self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
         else:
-            self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
-                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                  use_projector=self.use_projector, verbose=verbose, **kwargs)
+            # Use projector only if use_projector=1
+            if self.use_projector:
+                self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
+                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+            else:
+                # Original PatchTST: no projector params
+                self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
     
     
     def forward(self, x, target=None, return_projector=False):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
