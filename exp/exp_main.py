@@ -32,44 +32,30 @@ class Exp_Main(Exp_Basic):
         print("=" * 60)
 
         model = self.model
-
-        # Get use_projector setting
         use_projector = getattr(self.args, 'use_projector', 0)
-
-        # Get TiViT params
-        tivit_total = 0
-        if hasattr(model, 'tivit') and model.tivit is not None:
-            tivit_total = sum(p.numel() for p in model.tivit.parameters())
-
-        # Get Mantis params (from mantis.network)
-        mantis_total = 0
-        if hasattr(model, 'mantis') and model.mantis is not None:
-            if hasattr(model.mantis, 'network'):
-                mantis_total = sum(p.numel() for p in model.mantis.network.parameters())
-
-        # Get Chronos params (from chronos.model)
-        chronos_total = 0
-        if hasattr(model, 'chronos') and model.chronos is not None:
-            chronos_total = sum(p.numel() for p in model.chronos.model.parameters())
-
-        # Total model params
         all_total = sum(p.numel() for p in model.parameters())
         all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
         if use_projector:
-            # Get feature extractor type
-            feature_extractor = getattr(model, 'feature_extractor', 'mantis')
+            # Detect which feature extractor is created
+            feature_extractor = None
+            fe_total = 0
 
-            # Exclude feature extractor from total
-            total = all_total - tivit_total - mantis_total - chronos_total
-            # Trainable excluding feature extractor (they are frozen anyway, so just use all_trainable)
-            # Note: Feature extractor params have requires_grad=False, so no need to subtract
-            trainable_excl = all_trainable
+            if hasattr(model, 'tivit') and model.tivit is not None:
+                feature_extractor = 'tivit'
+                fe_total = sum(p.numel() for p in model.tivit.parameters())
+            elif hasattr(model, 'mantis') and model.mantis is not None:
+                feature_extractor = 'mantis'
+                fe_total = sum(p.numel() for p in model.mantis.network.parameters())
+            elif hasattr(model, 'chronos') and model.chronos is not None:
+                feature_extractor = 'chronos'
+                fe_total = sum(p.numel() for p in model.chronos.model.parameters())
+
+            total_excl = all_total - fe_total
 
             print(f"Total parameters (all):     {all_total:,}")
-            print(f"Total parameters (excl. {feature_extractor}): {total:,}")
+            print(f"Total parameters (excl. {feature_extractor}): {total_excl:,}")
             print(f"Trainable parameters:       {all_trainable:,}")
-            print(f"Trainable (excl. {feature_extractor}): {trainable_excl:,}")
 
             # Projector params
             if hasattr(model, 'model') and hasattr(model.model, 'projector'):
@@ -80,14 +66,9 @@ class Exp_Main(Exp_Basic):
                 print(f"\nProjector parameters (2): {proj_total:,}")
 
             # Feature extractor params
-            if feature_extractor == 'tivit' and tivit_total > 0:
-                print(f"\nTiViT parameters (frozen, excluded): {tivit_total:,}")
-            elif feature_extractor == 'mantis' and mantis_total > 0:
-                print(f"\nMantis parameters (frozen, excluded): {mantis_total:,}")
-            elif feature_extractor == 'chronos' and chronos_total > 0:
-                print(f"\nChronos parameters (frozen, excluded): {chronos_total:,}")
+            if feature_extractor:
+                print(f"\n{feature_extractor.capitalize()} parameters (frozen, excluded): {fe_total:,}")
         else:
-            # Original PatchTST without projector
             print(f"Total parameters:            {all_total:,}")
             print(f"Trainable parameters:       {all_trainable:,}")
             print("\nNote: Original PatchTST (use_projector=0)")
