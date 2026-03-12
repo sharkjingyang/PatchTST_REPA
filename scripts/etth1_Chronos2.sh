@@ -19,6 +19,7 @@ pred_len=720
 
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
+contrastive_type='mean_pool'  
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -46,9 +47,10 @@ python -u run_longExp.py \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor $feature_extractor \
+  --contrastive_type $contrastive_type \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors \
   --mantis_pretrained ./Mantis \
   --chronos_pretrained ./Chronos2 \
-  >logs/LongForecasting/${script_name}_${pred_len}.log
+  >logs/LongForecasting/${script_name}_${pred_len}_${contrastive_type}.log
