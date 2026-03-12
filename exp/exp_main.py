@@ -161,7 +161,8 @@ class Exp_Main(Exp_Basic):
         else:
             # mean_pool: use mean pooling over patch dimension
             zs_project = zs_project.mean(dim=2)  # -> (bs, nvars, d)
-            zs_tilde = zs_tilde.mean(dim=2)  # -> (bs, nvars, d)
+            if zs_tilde.dim() == 4:
+                zs_tilde = zs_tilde.mean(dim=2)  # -> (bs, nvars, d)
 
             # Normalize features
             zs_project = F.normalize(zs_project, dim=-1)
