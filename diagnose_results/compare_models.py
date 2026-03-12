@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import os
 import sys
+import argparse
 
 # Set random seed for reproducibility
 torch.manual_seed(2021)
@@ -26,7 +27,7 @@ print(f"Using device: {device}")
 seq_len = 336
 pred_len = 720
 enc_in = 7
-e_layers = 3
+e_layers = 4
 n_heads = 4
 d_model = 16
 d_ff = 128
@@ -39,7 +40,7 @@ stride = 8
 batch_size = 32
 
 # ============================================================
-# Load Original PatchTST
+# Load Original PatchTST Model
 # ============================================================
 print("\n" + "=" * 60)
 print("Loading Original PatchTST from PatchTST-main")
@@ -50,33 +51,38 @@ original_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'P
 sys.path.insert(0, original_path)
 
 # Import original model
-from layers.PatchTST_backbone import PatchTST_backbone as PatchTST_backbone_Original
+from models.PatchTST import Model as Model_Original
 
-# Create original model
+# Create original model args
+class ArgsOriginal:
+    def __init__(self):
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+        self.enc_in = enc_in
+        self.dec_in = enc_in
+        self.c_out = enc_in
+        self.e_layers = e_layers
+        self.n_heads = n_heads
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.dropout = dropout
+        self.fc_dropout = fc_dropout
+        self.head_dropout = head_dropout
+        self.patch_len = patch_len
+        self.stride = stride
+        self.padding_patch = 'end'
+        self.revin = 1
+        self.affine = 0
+        self.subtract_last = 0
+        self.decomposition = 0
+        self.kernel_size = 25
+        self.individual = 0
+        self.encoder_depth = 2
+
+args_orig = ArgsOriginal()
+
 torch.manual_seed(2021)
-model_orig = PatchTST_backbone_Original(
-    c_in=enc_in,
-    context_window=seq_len,
-    target_window=pred_len,
-    patch_len=patch_len,
-    stride=stride,
-    max_seq_len=1024,
-    n_layers=e_layers,
-    d_model=d_model,
-    n_heads=n_heads,
-    d_ff=d_ff,
-    dropout=dropout,
-    fc_dropout=fc_dropout,
-    head_dropout=head_dropout,
-    padding_patch='end',
-    pretrain_head=False,
-    head_type='flatten',
-    individual=False,
-    revin=True,
-    affine=False,
-    subtract_last=False,
-).float().to(device)
-
+model_orig = Model_Original(args_orig).float().to(device)
 model_orig.eval()
 
 # Count parameters
@@ -96,34 +102,40 @@ if original_path in sys.path:
     sys.path.remove(original_path)
 
 # Import our model
-from layers.PatchTST_backbone import PatchTST_backbone as PatchTST_backbone_Ours
+from models.PatchTST import Model as Model_Ours
 
-# Create our model (use_projector=0)
+# Create our model args
+class ArgsOurs:
+    def __init__(self):
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+        self.enc_in = enc_in
+        self.dec_in = enc_in
+        self.c_out = enc_in
+        self.e_layers = e_layers
+        self.n_heads = n_heads
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.dropout = dropout
+        self.fc_dropout = fc_dropout
+        self.head_dropout = head_dropout
+        self.patch_len = patch_len
+        self.stride = stride
+        self.padding_patch = 'end'
+        self.revin = 1
+        self.affine = 0
+        self.subtract_last = 0
+        self.decomposition = 0
+        self.kernel_size = 25
+        self.individual = 0
+        self.encoder_depth = 2
+        self.use_projector = 0
+        self.projector_dim = 768
+
+args_ours = ArgsOurs()
+
 torch.manual_seed(2021)
-model_ours = PatchTST_backbone_Ours(
-    c_in=enc_in,
-    context_window=seq_len,
-    target_window=pred_len,
-    patch_len=patch_len,
-    stride=stride,
-    max_seq_len=1024,
-    n_layers=e_layers,
-    d_model=d_model,
-    n_heads=n_heads,
-    d_ff=d_ff,
-    dropout=dropout,
-    fc_dropout=fc_dropout,
-    head_dropout=head_dropout,
-    padding_patch='end',
-    pretrain_head=False,
-    head_type='flatten',
-    individual=False,
-    revin=True,
-    affine=False,
-    subtract_last=False,
-    use_projector=0,  # Key: use original PatchTST mode
-).float().to(device)
-
+model_ours = Model_Ours(args_ours).float().to(device)
 model_ours.eval()
 
 # Count parameters
@@ -144,12 +156,10 @@ print("Creating Identical Input")
 print("=" * 60)
 
 torch.manual_seed(2021)
-batch_x = torch.randn(batch_size, seq_len, enc_in).to(device)
-batch_y = torch.randn(batch_size, seq_len + pred_len, enc_in).to(device)
+batch_x = torch.randn(batch_size, seq_len, enc_in).to(device)  # (bs, seq_len, nvars)
+batch_y = torch.randn(batch_size, seq_len + pred_len, enc_in).to(device)  # (bs, seq_len+pred_len, nvars)
 
-# Convert to (bs, nvars, seq_len)
-batch_x = batch_x.permute(0, 2, 1).float()
-
+# Model expects (bs, seq_len, nvars) - no need to permute
 print(f"batch_x shape: {batch_x.shape}")
 print(f"batch_y shape: {batch_y.shape}")
 
@@ -166,18 +176,14 @@ model_orig.eval()
 model_ours.eval()
 
 with torch.no_grad():
-    output_orig = model_orig(batch_x)  # returns (bs, nvars, pred_len)
-    output_ours = model_ours(batch_x)  # returns (bs, nvars, pred_len)
-
-# Permute to (bs, pred_len, nvars) for comparison
-output_orig_perm = output_orig.permute(0, 2, 1)
-output_ours_perm = output_ours.permute(0, 2, 1)
+    output_orig = model_orig(batch_x)  # returns (bs, pred_len, nvars)
+    output_ours = model_ours(batch_x)  # returns (bs, pred_len, nvars)
 
 print(f"Original output shape: {output_orig.shape}")
 print(f"Our output shape: {output_ours.shape}")
 
 # Compare outputs
-diff = torch.abs(output_orig_perm - output_ours_perm)
+diff = torch.abs(output_orig - output_ours)
 max_diff = diff.max().item()
 mean_diff = diff.mean().item()
 
@@ -200,16 +206,15 @@ print("=" * 60)
 
 # Create new input for backward with requires_grad
 torch.manual_seed(2021)
-batch_x_test = torch.randn(batch_size, enc_in, seq_len, requires_grad=True).to(device)
-batch_y_test = torch.randn(batch_size, pred_len, enc_in).to(device)
+batch_x_test = torch.randn(batch_size, seq_len, enc_in, requires_grad=True).to(device)  # (bs, seq_len, nvars)
+batch_y_test = torch.randn(batch_size, pred_len, enc_in).to(device)  # (bs, pred_len, nvars)
 
 # Make sure both models are in train mode
 model_orig.train()
 model_ours.train()
 
 # Original model backward
-output_orig_train = model_orig(batch_x_test)
-output_orig_train = output_orig_train.permute(0, 2, 1)
+output_orig_train = model_orig(batch_x_test)  # returns (bs, pred_len, nvars)
 
 criterion = nn.MSELoss()
 loss_orig = criterion(output_orig_train, batch_y_test)
@@ -226,8 +231,7 @@ for name, param in model_orig.named_parameters():
 print("Original model backward completed.")
 
 # Our model backward
-output_ours_train = model_ours(batch_x_test)
-output_ours_train = output_ours_train.permute(0, 2, 1)
+output_ours_train = model_ours(batch_x_test)  # returns (bs, pred_len, nvars)
 
 loss_ours = criterion(output_ours_train, batch_y_test)
 loss_ours.backward()
