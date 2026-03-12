@@ -355,13 +355,10 @@ class Exp_Main(Exp_Basic):
             # Get current learning rate
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
 
-            # Format: epoch with * if best model updated, cost time with 3 decimals, lr with 4 decimal scientific notation
-            epoch_prefix = '***' if is_best_update else ''
-            print("{}Epoch: {} | cost time: {:.3f} | lr: {:.4e}".format(
-                epoch_prefix, epoch + 1, cost_time, current_lr))
-
-            print("Steps: {0} | Train Loss: {1:.7f} | Train MSE: {2:.7f} | Train Contrastive: {3:.7f} | Vali Loss: {4:.7f} | Test Loss: {5:.7f}".format(
-                train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
+            # Format: *** at the end if best model updated
+            best_suffix = ' ***' if is_best_update else ''
+            print("Epoch: {} | cost time: {:.3f} | lr: {:.4e} | Steps: {} | Train Loss: {:.7f} | Train MSE: {:.7f} | Train Contrastive: {:.7f} | Vali Loss: {:.7f} | Test Loss: {:.7f}{}".format(
+                epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss, best_suffix))
 
             # Early stopping check
             if vali_loss >= best_val_loss:
