@@ -280,10 +280,12 @@ class Exp_Main(Exp_Basic):
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
                             # Check if use_projector is enabled
                             use_projector = getattr(self.args, 'use_projector', 0)
+                            # Slice target to pred_len for feature extraction
+                            batch_y_pred = batch_y[:, -self.args.pred_len:, :]
                             if use_projector:
-                                outputs, _, _ = self.model(batch_x, batch_y, return_projector=True)  # Get final output + features
+                                outputs, _, _ = self.model(batch_x, batch_y_pred, return_projector=True)  # Get final output + features
                             else:
-                                outputs = self.model(batch_x, batch_y)  # Original PatchTST: returns only output
+                                outputs = self.model(batch_x, batch_y_pred)  # Original PatchTST: returns only output
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -303,10 +305,12 @@ class Exp_Main(Exp_Basic):
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
                         # Check if use_projector is enabled
                         use_projector = getattr(self.args, 'use_projector', 0)
+                        # Slice target to pred_len for feature extraction
+                        batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
                         if use_projector:
-                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y, return_projector=True)  # Get final output + projected features + TiViT features
+                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
                         else:
-                            outputs = self.model(batch_x, batch_y)  # Original PatchTST: returns only output
+                            outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]

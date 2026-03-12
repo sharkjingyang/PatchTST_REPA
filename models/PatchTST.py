@@ -243,11 +243,11 @@ class Model(nn.Module):
             output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
 
             # Only extract feature extractor features when return_projector=True (training)
+            # Note: target should already be sliced to pred_len in exp_main.py
             zs_tilde = None
             if return_projector and target is not None:
                 with torch.no_grad():
-                    # Use only the prediction part: target[:, -pred_len:, :]
-                    target_pred = target[:, -self.pred_len:, :]  # (bs, pred_len, nvars)
+                    target_pred = target  # (bs, pred_len, nvars) - already sliced in exp_main.py
 
                     if self.feature_extractor == 'tivit' and self.tivit is not None:
                         # TiViT extraction
