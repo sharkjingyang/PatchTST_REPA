@@ -362,7 +362,7 @@ class Exp_Main(Exp_Basic):
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
 
             # Format: epoch with * if best model updated, cost time with 3 decimals, lr with 4 decimal scientific notation
-            epoch_prefix = '*' if is_best_update else ''
+            epoch_prefix = '***' if is_best_update else ''
             print("Epoch: {}{} | cost time: {:.3f} | lr: {:.4e}".format(
                 epoch_prefix, epoch + 1, cost_time, current_lr))
 
