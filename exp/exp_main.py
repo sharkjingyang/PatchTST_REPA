@@ -363,7 +363,7 @@ class Exp_Main(Exp_Basic):
 
             # Format: epoch with * if best model updated, cost time with 3 decimals, lr with 4 decimal scientific notation
             epoch_prefix = '***' if is_best_update else ''
-            print("Epoch: {}{} | cost time: {:.3f} | lr: {:.4e}".format(
+            print("{}Epoch: {} | cost time: {:.3f} | lr: {:.4e}".format(
                 epoch_prefix, epoch + 1, cost_time, current_lr))
 
             print("Steps: {0} | Train Loss: {1:.7f} | Train MSE: {2:.7f} | Train Contrastive: {3:.7f} | Vali Loss: {4:.7f} | Test Loss: {5:.7f}".format(
