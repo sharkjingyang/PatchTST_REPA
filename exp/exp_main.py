@@ -221,6 +221,7 @@ class Exp_Main(Exp_Basic):
             early_stopping = None
             best_val_loss = float('inf')
             no_improve_count = 0
+            best_model_state = None  # Save best model state for test
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -357,6 +358,9 @@ class Exp_Main(Exp_Basic):
             is_best_update = vali_loss < best_val_loss
             if is_best_update:
                 best_val_loss = vali_loss
+                if not self.args.save_checkpoint:
+                    # Save best model state for later test
+                    best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
 
             # Get current learning rate
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
@@ -391,6 +395,9 @@ class Exp_Main(Exp_Basic):
         if self.args.save_checkpoint:
             best_model_path = path + '/' + 'checkpoint.pth'
             self.model.load_state_dict(torch.load(best_model_path))
+        elif best_model_state is not None:
+            # Load best model state when save_checkpoint=0
+            self.model.load_state_dict(best_model_state)
 
         # Save loss per step for plotting (in results folder)
         results_folder = './results/' + setting + '/'
