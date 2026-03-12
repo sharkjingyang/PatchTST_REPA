@@ -62,6 +62,8 @@ if __name__ == '__main__':
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
     parser.add_argument('--use_projector', type=int, default=0, help='use MLP projector for zs (1: use, 0: not use)')
     parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
+    parser.add_argument('--contrastive_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise'],
+                        help='contrastive loss type: mean_pool (mean pooling) or patch_wise (interpolate then per-patch)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')
     parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'], help='Feature extractor for contrastive loss: tivit, mantis or chronos')
     parser.add_argument('--mantis_pretrained', type=str, default='./Mantis', help='Mantis pretrained model path')

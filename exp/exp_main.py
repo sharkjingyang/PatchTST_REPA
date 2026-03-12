@@ -122,20 +122,20 @@ class Exp_Main(Exp_Basic):
         Compute contrastive loss between projected features and TiViT/Mantis/Chronos features.
         对每个 nvar 单独计算 cosine similarity，然后求和。
 
-        For Chronos: use interpolate instead of mean pooling to preserve patch-level alignment.
-        For TiViT/Mantis: use mean pooling as they don't have patch dimension.
-
         Args:
             zs_project: (bs, nvars, patch_num, d_model) or (bs, nvars, patch_num, projector_dim) - PatchTST projected features
             zs_tilde: (bs, nvars, d_vit) for TiViT/Mantis, or (bs, nvars, num_patches, d_vit) for Chronos
+            contractive_type: 'mean_pool' or 'patch_wise'
 
         Returns:
             loss: scalar contrastive loss
         """
-        # zs_tilde: depends on feature extractor
-        if zs_tilde.dim() == 4:  # Chronos: (bs, nvars, num_patches, d)
-            # Interpolate zs_project to match zs_tilde's patch_num
-            # zs_project: (bs, nvars, patch_num, d) -> (bs, nvars, target_patch_num, d)
+        contractive_type = getattr(self.args, 'contrastive_type', 'mean_pool')
+
+        # For Chronos with patch_wise: use interpolate to match patch_num
+        # For others or mean_pool: use mean pooling
+        if zs_tilde.dim() == 4 and contractive_type == 'patch_wise':
+            # Chronos with patch_wise: interpolate zs_project to match zs_tilde's patch_num
             target_patch_num = zs_tilde.shape[2]
             zs_project = F.interpolate(
                 zs_project.permute(0, 1, 3, 2),  # (bs, nvars, d, patch_num)
@@ -155,8 +155,7 @@ class Exp_Main(Exp_Basic):
             # Sum over all (batch_size * nvars * patch_num), then normalize
             loss = -similarity.sum() / similarity.numel()
         else:
-            # TiViT/Mantis: (bs, nvars, d) - already pooled, no patch dimension
-            # Mean pooling over patch dimension
+            # mean_pool: use mean pooling over patch dimension
             zs_project = zs_project.mean(dim=2)  # -> (bs, nvars, d)
 
             # Normalize features
