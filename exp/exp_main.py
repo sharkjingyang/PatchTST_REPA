@@ -211,6 +211,7 @@ class Exp_Main(Exp_Basic):
 
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
+        best_val_loss = float('inf')  # Track best validation loss
         best_model_state = None  # Save best model state for test
 
         model_optim = self._select_optimizer()
@@ -366,14 +367,6 @@ class Exp_Main(Exp_Basic):
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
-                if vali_loss < best_val_loss:
-                    best_val_loss = vali_loss
-                    no_improve_count = 0
-                else:
-                    no_improve_count += 1
-                if no_improve_count >= self.args.patience:
-                    print("Early stopping")
-                    break
 
             if self.args.lradj != 'TST':
                 adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
