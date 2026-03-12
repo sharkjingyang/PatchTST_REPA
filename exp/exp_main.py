@@ -346,17 +346,17 @@ class Exp_Main(Exp_Basic):
                     adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args, printout=False)
                     scheduler.step()
 
-            # Check if best model updated
-            is_best_update = vali_loss < best_val_loss
-            if is_best_update:
-                best_val_loss = vali_loss
-
             cost_time = time.time() - epoch_time
             train_loss = np.average(train_loss)
             train_mse_loss = np.average(train_mse_loss)
             train_contrastive_loss = np.average(train_contrastive_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
+
+            # Check if best model updated (after vali_loss is computed)
+            is_best_update = vali_loss < best_val_loss
+            if is_best_update:
+                best_val_loss = vali_loss
 
             # Get current learning rate
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
