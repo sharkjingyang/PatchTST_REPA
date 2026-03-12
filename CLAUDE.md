@@ -64,6 +64,19 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Chronos2-extracted features.
 
+### Running with Chronos patch_wise Contrastive Loss
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor chronos --projector_dim 768 \
+  --lambda_contrastive 0.5 --contrastive_type patch_wise \
+  --chronos_pretrained ./Chronos2
+```
+This uses patch-wise contrastive loss instead of mean pooling for Chronos.
+
 ### Running Original PatchTST (without projector)
 ```bash
 python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
@@ -78,6 +91,7 @@ Or use provided shell scripts:
 sh ./scripts/etth1_PatchTST.sh   # Original PatchTST (baseline)
 sh ./scripts/etth1_mantis.sh      # PatchTST_REPA: PatchTST + Mantis feature alignment
 sh ./scripts/etth1_Chronos2.sh   # PatchTST_REPA: PatchTST + Chronos2 feature alignment
+sh ./scripts/etth1_Chronos2_patchwise.sh  # PatchTST_REPA: Chronos with patch_wise contrastive loss
 ```
 
 ### Training Log Format
@@ -134,7 +148,7 @@ The system combines PatchTST with a feature extractor for enhanced feature repre
 1. **MLP Projector** (`layers/PatchTST_backbone.py`): Maps `zs` (from encoder intermediate layer) to feature extractor space
    - Input: `(bs, nvars, d_model, patch_num)` → reshape → `(bs*nvars*patch_num, d_model)`
    - MLP: `d_model` → hidden → `projector_dim` (default: 768 for TiViT, 256 for Mantis)
-   - Output: `(bs, nvars, projector_dim)` after mean pooling over patches
+   - Output: `(bs, nvars, patch_num, projector_dim)` - mean pooling is done in contrastive loss computation
 
 2. **TiViT Feature Extraction** (`layers/Tivit.py`): Converts time series to images and uses pre-trained ViT
    - Extracts features from target sequence per channel
@@ -167,9 +181,9 @@ batch_y: (batch, seq_len+pred_len, nvars) = (32, 432, 7)
   ↓ 4. reshape: (224, 41, 16)                 # (batch*nvars, patch_num, d_model)
   ↓ 5. Transformer Encoder (d_model=16 stays constant)
   ↓ 6. reshape back: (32, 7, 16, 41)          # (batch, nvars, d_model, patch_num)
-  ↓ 7. MLP Projector: (32, 7, 256)            # (batch, nvars, projector_dim)
+  ↓ 7. MLP Projector: (32, 7, 41, 256)         # (batch, nvars, patch_num, projector_dim)
 
-zs: (32, 7, 256)                            # (batch, nvars, projector_dim)
+zs: (32, 7, 41, 256)                        # (batch, nvars, patch_num, projector_dim) - no mean pooling
 output: (32, 7, 96)                         # (batch, nvars, pred_len)
 ```
 
@@ -187,9 +201,11 @@ zs_tilde: (32, 7, 256)       # (batch, nvars, 256)
 #### Final Output
 ```
 output:   (32, 96, 7)   # (batch, pred_len, nvars)
-zs:       (32, 7, 256)  # (batch, nvars, projector_dim)
-zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
+zs:       (32, 7, patch_num, projector_dim)  # (batch, nvars, patch_num, projector_dim) - no mean pooling
+zs_tilde: (32, 7, 256)  # (batch, nvars, 256) for Mantis, or (batch, nvars, num_patches, 768) for Chronos
 ```
+
+Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model.
 
 ### Key Hyperparameters
 - `patch_len`: Length of each patch (default: 16)
@@ -209,6 +225,7 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256)
 - `feature_extractor`: Feature extractor for contrastive loss: `tivit`, `mantis` or `chronos` (default: `mantis`)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
+- `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (interpolate then per-patch) (default: `mean_pool`)
 
 Note:
 - Best model is automatically saved in memory during training and loaded for test
@@ -356,8 +373,8 @@ Chronos module uses Chronos2 from Amazon for feature extraction.
 - **Input**: `(batch, pred_len, nvars)` - uses only prediction part, permuted to `(batch, nvars, pred_len)`
 - **Chronos embed**: Returns list of embeddings per sample
 - **Each embedding**: `(n_variates, num_patches, 768)` - includes REG token and output patch
-- **Post-processing**: Remove REG token and output patch, then mean pool over patches
-- **Output**: `(batch, nvars, 768)` - 768-dimensional features
+- **Post-processing**: Remove REG token and output patch - no mean pooling in model
+- **Output**: `(batch, nvars, num_patches, 768)` - patch-level features, mean pooling done in contrastive loss
 
 ### Key Features
 
@@ -365,6 +382,9 @@ Chronos module uses Chronos2 from Amazon for feature extraction.
 - 12 layers, 12 heads, 768 hidden dimensions
 - Native patch-based processing (patch_size=16)
 - Pre-trained on multiple time series datasets
+- Supports two contrastive loss types:
+  - `mean_pool`: Mean pool over patches before computing similarity
+  - `patch_wise`: Interpolate zs_project to match zs_tilde patch count, compute per-patch similarity
 
 ## Datasets
 
@@ -390,3 +410,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
   - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)
 - **Auto-set use_projector**: `PatchTST` model auto-sets `use_projector=0`, `PatchTST_REPA` auto-sets `use_projector=1`
 - **Best model in memory**: Best model is now saved in memory during training and automatically loaded for test (no checkpoint file saved by default)
+- **Mean pooling moved to contrastive loss**: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model (PatchTST_backbone and Chronos extraction)
+- **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches) and `patch_wise` (interpolate zs_project to match zs_tilde patch count, compute per-patch similarity)
+- **Training log format**: Fixed to use 3 decimal places for cost time, 4 decimal places scientific notation for lr, and `***` prefix at end of line for best model updates
+- **is_best_update error**: Fixed local variable referenced before assignment error by computing vali_loss before using is_best_update
