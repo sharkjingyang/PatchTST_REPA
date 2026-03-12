@@ -119,21 +119,26 @@ class Exp_Main(Exp_Basic):
 
     def _compute_contrastive_loss(self, zs_project, zs_tilde):
         """
-        Compute contrastive loss between projected features and TiViT features.
+        Compute contrastive loss between projected features and TiViT/Mantis/Chronos features.
         对每个 nvar 单独计算 cosine similarity，然后求和。
 
         Args:
             zs_project: (bs, nvars, patch_num, d_model) or (bs, nvars, patch_num, projector_dim) - PatchTST projected features
-            zs_tilde: (bs, nvars, num_patches, d_vit) - TiViT/Mantis/Chronos features
+            zs_tilde: (bs, nvars, d_vit) for TiViT/Mantis, or (bs, nvars, num_patches, d_vit) for Chronos
 
         Returns:
             loss: scalar contrastive loss
         """
-        # Mean pooling over patch dimension first
-        # zs_project: (bs, nvars, patch_num, d) -> (bs, nvars, d)
-        # zs_tilde: (bs, nvars, num_patches, d) -> (bs, nvars, d)
-        zs_project = zs_project.mean(dim=2)
-        zs_tilde = zs_tilde.mean(dim=2)
+        # Handle different feature extractor output shapes
+        # zs_project always has patch dimension: (bs, nvars, patch_num, d)
+        zs_project = zs_project.mean(dim=2)  # -> (bs, nvars, d)
+
+        # zs_tilde: depends on feature extractor
+        # - TiViT/Mantis: (bs, nvars, d) - already pooled
+        # - Chronos: (bs, nvars, num_patches, d) - needs pooling
+        if zs_tilde.dim() == 4:  # has patch dimension (Chronos)
+            zs_tilde = zs_tilde.mean(dim=2)  # -> (bs, nvars, d)
+        # else: already 3D (TiViT/Mantis), no pooling needed
 
         # Normalize features
         zs_project = F.normalize(zs_project, dim=-1)
