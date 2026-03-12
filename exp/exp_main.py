@@ -1,7 +1,7 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
+from utils.tools import adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
 import numpy as np
@@ -210,9 +210,9 @@ class Exp_Main(Exp_Basic):
         loss_contrastive_per_step = []
 
         train_steps = len(train_loader)
-        early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
         best_val_loss = float('inf')  # Track best validation loss
         best_model_state = None  # Save best model state for test
+        no_improve_count = 0  # Early stopping counter
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -363,10 +363,14 @@ class Exp_Main(Exp_Basic):
             print("Steps: {0} | Train Loss: {1:.7f} | Train MSE: {2:.7f} | Train Contrastive: {3:.7f} | Vali Loss: {4:.7f} | Test Loss: {5:.7f}".format(
                 train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
 
-            early_stopping(vali_loss, self.model, None)
-            if early_stopping.early_stop:
-                print("Early stopping")
-                break
+            # Early stopping check
+            if vali_loss >= best_val_loss:
+                no_improve_count += 1
+                if no_improve_count >= self.args.patience:
+                    print("Early stopping")
+                    break
+            else:
+                no_improve_count = 0
 
             if self.args.lradj != 'TST':
                 adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
