@@ -17,9 +17,6 @@ data_name=ETTh1
 random_seed=2021
 pred_len=720
 
-# Use projector for feature alignment (1: use, 0: original PatchTST)
-use_projector=0
-
 python -u run_longExp.py \
   --random_seed $random_seed \
   --is_training 1 \
@@ -44,5 +41,4 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector $use_projector \
   >logs/LongForecasting/${script_name}_${pred_len}.log

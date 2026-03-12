@@ -45,43 +45,42 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1_REPA.sh           # PatchTST with Mantis feature alignment (use_projector=1)
-sh ./scripts/etth1_PatchTST.sh       # Original PatchTST without projector (use_projector=0)
+sh ./scripts/etth1_mantis.sh         # PatchTST_REPA with Mantis feature alignment
+sh ./scripts/etth1_PatchTST.sh       # Original PatchTST (baseline)
 ```
 
 - **etth1_REPA.sh**: Runs PatchTST with contrastive learning feature alignment using Mantis as feature extractor
 - **etth1_PatchTST.sh**: Runs original PatchTST (baseline, no projector or feature extractor)
 
-#### PatchTST + Mantis Feature Alignment (Default)
+#### PatchTST_REPA + Mantis Feature Alignment (Default)
 ```bash
-python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --mantis_pretrained ./Mantis --lambda_contrastive 0.5
+  --mantis_pretrained ./Mantis --lambda_contrastive 0.5
 ```
 
-#### PatchTST + TiViT Feature Alignment
+#### PatchTST_REPA + TiViT Feature Alignment
 ```bash
-python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 1 --feature_extractor tivit --projector_dim 768 \
+  --feature_extractor tivit --projector_dim 768 \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors
 ```
 
-#### Original PatchTST (without projector)
+#### Original PatchTST (baseline)
 ```bash
 python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector 0
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001
 ```
 
 ## Architecture
@@ -119,12 +118,11 @@ The model returns a tuple `(output, zs)`:
 | `n_heads` | Number of attention heads | 16 |
 | `e_layers` | Number of encoder layers | 4 |
 | `encoder_depth` | Which encoder layer to extract intermediate output | 2 |
-| `use_projector` | Use MLP projector and feature extractor (1: use, 0: original PatchTST) | 1 |
-| `projector_dim` | MLP projector output dimension (768 for TiViT, 256 for Mantis) | 768 |
-| `feature_extractor` | Feature extractor: `tivit` or `mantis` | `mantis` |
+| `projector_dim` | MLP projector output dimension (768 for TiViT/Chronos, 256 for Mantis) | 768 |
+| `feature_extractor` | Feature extractor: `tivit`, `mantis` or `chronos` | `mantis` |
 | `lambda_contrastive` | Weight for contrastive loss | 0.5 |
 
-Note: Projector and feature extractor are only created when `use_projector=1`. Training uses `return_projector=True` to compute contrastive loss. When using Mantis, `projector_dim` is automatically set to 256.
+Note: Using `model=PatchTST_REPA` automatically enables the projector and contrastive loss. Using `model=PatchTST` runs the original PatchTST baseline.
 
 ## Feature Alignment
 

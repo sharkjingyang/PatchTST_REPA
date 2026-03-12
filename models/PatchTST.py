@@ -284,7 +284,7 @@ class Model(nn.Module):
                         # target_pred: (bs, pred_len, nvars) -> (bs, nvars, pred_len)
                         target_perm = target_pred.permute(0, 2, 1)  # (bs, nvars, pred_len)
                         # Get embeddings: list of (n_variates, num_patches, d_model)
-                        embeddings, loc_scales = self.chronos.embed(target_perm)
+                        embeddings, loc_scales = self.chronos.embed(target_perm.cpu())
                         # Extract patch embeddings (exclude REG token and output patch)
                         # Each embedding: (n_variates, num_patches, 768)
                         # No mean pooling - done in contrastive loss
@@ -293,7 +293,7 @@ class Model(nn.Module):
                             num_patches = emb.shape[1] - 2  # subtract REG token and output patch
                             patch_emb = emb[:, :num_patches, :]  # (n_variates, num_patches, 768)
                             patch_embeddings.append(patch_emb)
-                        zs_tilde = torch.stack(patch_embeddings, dim=0)  # (bs, nvars, num_patches, 768)
+                        zs_tilde = torch.stack(patch_embeddings, dim=0).to(self.device)  # (bs, nvars, num_patches, 768)
 
             if return_projector:
                 return output, zs, zs_tilde

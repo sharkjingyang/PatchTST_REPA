@@ -20,9 +20,6 @@ pred_len=720
 # Choose feature extractor: 'tivit' or 'mantis'
 feature_extractor='mantis'
 
-# Use projector for feature alignment (1: use, 0: original PatchTST)
-use_projector=1
-
 python -u run_longExp.py \
   --random_seed $random_seed \
   --is_training 1 \
@@ -48,7 +45,6 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --use_projector $use_projector \
   --feature_extractor $feature_extractor \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \

@@ -134,9 +134,9 @@ Input (Batch, Input Length, Channels)
 ```
 
 **Model Output**: The model returns:
-- When `use_projector=0` (original PatchTST): only `output`
-- When `use_projector=1` and `return_projector=False`: tuple `(output, zs)`
-- When `use_projector=1` and `return_projector=True`: tuple `(output, zs, zs_tilde)`
+- When using `PatchTST` model: only `output` (original PatchTST)
+- When using `PatchTST_REPA` model with `return_projector=False`: tuple `(output, zs)`
+- When using `PatchTST_REPA` model with `return_projector=True`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
 - `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 4), after MLP projector
 - `zs_tilde`: Feature extractor (TiViT/Mantis/Chronos) extracted features from target sequence
@@ -218,7 +218,6 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `encoder_depth`: Which encoder layer to extract intermediate output (default: 4)
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
-- `use_projector`: Use MLP projector and feature extractor (1: use, 0: original PatchTST, default: auto-set based on model name)
 - `projector_dim`: MLP projector output dimension (default: 768, auto-adjusts to 256 when using Mantis)
 - `lambda_contrastive`: Weight for contrastive loss (default: 0.5)
 - `tivit_pretrained`: TiViT pretrained model path (default: `./open_clip/open_clip_model.safetensors`)
@@ -229,9 +228,9 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 
 Note:
 - Best model is automatically saved in memory during training and loaded for test
-- Projector and feature extractor are only created when `use_projector=1` or when using `PatchTST_REPA` model
-- `PatchTST` model automatically sets `use_projector=0` (original PatchTST)
-- `PatchTST_REPA` model automatically sets `use_projector=1` (with feature alignment)
+- Projector and feature extractor are only created when using `PatchTST_REPA` model
+- `PatchTST` model runs original PatchTST (baseline)
+- `PatchTST_REPA` model automatically enables projector and contrastive loss
 
 ## Directory Structure
 
@@ -403,12 +402,11 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
 - **Chronos support**: Added Chronos2 as third feature extractor option
 - **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment
-- **use_projector switch**: Added `use_projector` parameter to enable/disable projector and feature extractors for baseline comparison (use_projector=0: original PatchTST, use_projector=1: with feature alignment)
-- **Original PatchTST compatibility**: When `use_projector=0`, the model now behaves identically to original PatchTST:
+- **Model-based projector switch**: Using `model=PatchTST` runs original PatchTST, `model=PatchTST_REPA` enables projector and feature alignment
+- **Original PatchTST compatibility**: PatchTST model behaves identically to original PatchTST:
   - TSTiEncoder only computes final output (no intermediate extraction)
   - PatchTST_backbone.forward returns only `output` (not tuple)
   - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)
-- **Auto-set use_projector**: `PatchTST` model auto-sets `use_projector=0`, `PatchTST_REPA` auto-sets `use_projector=1`
 - **Best model in memory**: Best model is now saved in memory during training and automatically loaded for test (no checkpoint file saved by default)
 - **Mean pooling moved to contrastive loss**: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model (PatchTST_backbone and Chronos extraction)
 - **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches) and `patch_wise` (interpolate zs_project to match zs_tilde patch count, compute per-patch similarity)

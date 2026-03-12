@@ -35,9 +35,11 @@ parser.add_argument('--decomposition', type=int, default=0)
 parser.add_argument('--kernel_size', type=int, default=25)
 parser.add_argument('--individual', type=int, default=0)
 parser.add_argument('--encoder_depth', type=int, default=2)
-parser.add_argument('--use_projector', type=int, default=1)
 parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'])
 parser.add_argument('--projector_dim', type=int, default=768)
+
+# Set model name to PatchTST_REPA to auto-enable projector
+args.model = 'PatchTST_REPA'
 
 args = parser.parse_args()
 
