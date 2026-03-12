@@ -33,7 +33,7 @@ python -u run_longExp.py \
   --pred_len $pred_len \
   --enc_in 7 \
   --e_layers 4 \
-  --encoder_depth 4 \
+  --encoder_depth 2 \
   --n_heads 4 \
   --d_model 16 \
   --d_ff 128 \

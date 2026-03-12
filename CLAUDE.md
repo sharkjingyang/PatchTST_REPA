@@ -138,7 +138,7 @@ Input (Batch, Input Length, Channels)
 - When using `PatchTST_REPA` model with `return_projector=False`: tuple `(output, zs)`
 - When using `PatchTST_REPA` model with `return_projector=True`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
-- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 4), after MLP projector
+- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 2), after MLP projector
 - `zs_tilde`: Feature extractor (TiViT/Mantis/Chronos) extracted features from target sequence
 
 ### Feature Alignment (TiViT, Mantis or Chronos)
@@ -187,9 +187,9 @@ zs: (32, 7, 41, 256)                        # (batch, nvars, patch_num, projecto
 output: (32, 7, 96)                         # (batch, nvars, pred_len)
 ```
 
-#### Mantis Feature Extraction (uses target[:, -pred_len:, :])
+#### Mantis Feature Extraction (target already sliced to pred_len in exp_main)
 ```
-target_pred: (32, 96, 7)     # target[:, -pred_len:, :] - prediction part only
+target_pred: (32, 96, 7)     # target (already sliced to pred_len in exp_main)
   ↓ permute: (32, 7, 96)    # (batch, nvars, pred_len)
   ↓ interpolate: (32, 7, 512) # resize to 512
   ↓ Mantis.transform: (32, 1792)  # (batch, nvars*256)
@@ -215,7 +215,7 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `d_model`: Transformer model dimension
 - `n_heads`: Number of attention heads
 - `e_layers`: Number of encoder layers (default: 3)
-- `encoder_depth`: Which encoder layer to extract intermediate output (default: 4)
+- `encoder_depth`: Which encoder layer to extract intermediate output (default: 2)
 - `revin`: Enable reversible instance normalization
 - `decomposition`: Enable series decomposition
 - `projector_dim`: MLP projector output dimension (default: 768, auto-adjusts to 256 when using Mantis)
@@ -401,14 +401,14 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **TiViT moved to PatchTST model**: TiViT creation moved from `exp/exp_main.py` to `models/PatchTST.py` for better encapsulation
 - **Mantis support**: Added support for Mantis8M feature extractor in addition to TiViT
 - **Chronos support**: Added Chronos2 as third feature extractor option
-- **Feature extraction from prediction part**: Feature extractor now uses only `target[:, -pred_len:, :]` for alignment
+- **Feature extraction from prediction part**: Target is sliced to pred_len in `exp_main.py` before passing to model, feature extractor uses only this sliced portion for alignment
 - **Model-based projector switch**: Using `model=PatchTST` runs original PatchTST, `model=PatchTST_REPA` enables projector and feature alignment
 - **Original PatchTST compatibility**: PatchTST model behaves identically to original PatchTST:
   - TSTiEncoder only computes final output (no intermediate extraction)
   - PatchTST_backbone.forward returns only `output` (not tuple)
   - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)
 - **Best model in memory**: Best model is now saved in memory during training and automatically loaded for test (no checkpoint file saved by default)
-- **Mean pooling moved to contrastive loss**: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model (PatchTST_backbone and Chronos extraction)
-- **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches) and `patch_wise` (interpolate zs_project to match zs_tilde patch count, compute per-patch similarity)
+- **Mean pooling moved to contrastive loss**: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model (both zs_project and zs_tilde are mean pooled for mean_pool type)
+- **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches for both zs_project and zs_tilde) and `patch_wise` (interpolate zs_project to match zs_tilde patch count, compute per-patch similarity)
 - **Training log format**: Fixed to use 3 decimal places for cost time, 4 decimal places scientific notation for lr, and `***` prefix at end of line for best model updates
 - **is_best_update error**: Fixed local variable referenced before assignment error by computing vali_loss before using is_best_update
