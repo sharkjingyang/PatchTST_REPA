@@ -346,15 +346,29 @@ class Exp_Main(Exp_Basic):
                     adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args, printout=False)
                     scheduler.step()
 
-            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+            # Check if best model updated
+            is_best_update = vali_loss < best_val_loss
+            if is_best_update:
+                best_val_loss = vali_loss
+
+            cost_time = time.time() - epoch_time
             train_loss = np.average(train_loss)
             train_mse_loss = np.average(train_mse_loss)
             train_contrastive_loss = np.average(train_contrastive_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} | Train MSE: {3:.7f} | Train Contrastive: {4:.7f} | Vali Loss: {5:.7f} | Test Loss: {6:.7f}".format(
-                epoch + 1, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
+            # Get current learning rate
+            current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
+
+            # Format: epoch with * if best model updated, cost time with 3 decimals, lr with 4 decimal scientific notation
+            epoch_prefix = '*' if is_best_update else ''
+            print("Epoch: {}{} | cost time: {:.3f} | lr: {:.4e}".format(
+                epoch_prefix, epoch + 1, cost_time, current_lr))
+
+            print("Steps: {0} | Train Loss: {1:.7f} | Train MSE: {2:.7f} | Train Contrastive: {3:.7f} | Vali Loss: {4:.7f} | Test Loss: {5:.7f}".format(
+                train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss))
+
             if self.args.save_checkpoint:
                 early_stopping(vali_loss, self.model, path)
                 if early_stopping.early_stop:
@@ -373,8 +387,6 @@ class Exp_Main(Exp_Basic):
 
             if self.args.lradj != 'TST':
                 adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
-            else:
-                print('Updating learning rate to {}'.format(scheduler.get_last_lr()[0]))
 
         if self.args.save_checkpoint:
             best_model_path = path + '/' + 'checkpoint.pth'
