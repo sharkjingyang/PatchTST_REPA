@@ -130,24 +130,10 @@ class Exp_Main(Exp_Basic):
         """
         contractive_type = getattr(self.args, 'contrastive_type', 'mean_pool')
 
-        # For Chronos with patch_wise: use interpolate to match patch_num
+        # For Chronos with patch_wise: patch_num is already consistent (interpolated in data prep)
         # For others or mean_pool: use mean pooling
         if zs_tilde.dim() == 4 and contractive_type == 'patch_wise':
-            # Chronos with patch_wise: interpolate zs_project to match zs_tilde's patch_num
-            target_patch_num = zs_tilde.shape[2]
-            # Reshape to 3D for F.interpolate: (bs, nvars, d, patch_num) -> (bs*nvars, d, patch_num)
-            bs, nvars, patch_num, d = zs_project.shape
-            zs_project_3d = zs_project.permute(0, 1, 3, 2).reshape(bs * nvars, d, patch_num)
-            # Interpolate: (bs*nvars, d, patch_num) -> (bs*nvars, d, target_patch_num)
-            zs_project_interp = F.interpolate(
-                zs_project_3d,
-                size=target_patch_num,
-                mode='linear',
-                align_corners=False
-            )
-            # Reshape back: (bs*nvars, d, target_patch_num) -> (bs, nvars, d, target_patch_num)
-            zs_project = zs_project_interp.reshape(bs, nvars, d, target_patch_num).permute(0, 1, 3, 2)  # (bs, nvars, target_patch_num, d)
-
+            # patch_num is already consistent (interpolated to seq_len in data prep)
             # Normalize features
             zs_project = F.normalize(zs_project, dim=-1)
             zs_tilde = F.normalize(zs_tilde, dim=-1)
@@ -315,6 +301,16 @@ class Exp_Main(Exp_Basic):
                         use_projector = getattr(self.args, 'use_projector', 0)
                         # Slice target to pred_len for feature extraction
                         batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
+
+                        # When using Chronos, interpolate to seq_len length to keep patch_num consistent
+                        if use_projector and getattr(self.args, 'feature_extractor', None) == 'chronos':
+                            batch_y_for_model = F.interpolate(
+                                batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
+                                size=self.args.seq_len,
+                                mode='linear',
+                                align_corners=False
+                            ).permute(0, 2, 1)  # (bs, seq_len, nvars)
+
                         if use_projector:
                             outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
                         else:

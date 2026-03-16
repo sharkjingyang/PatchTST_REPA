@@ -88,10 +88,9 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
 
 Or use provided shell scripts:
 ```bash
-sh ./scripts/etth1_PatchTST.sh   # Original PatchTST (baseline)
-sh ./scripts/etth1_mantis.sh      # PatchTST_REPA: PatchTST + Mantis feature alignment
-sh ./scripts/etth1_Chronos2.sh   # PatchTST_REPA: PatchTST + Chronos2 feature alignment
-sh ./scripts/etth1_Chronos2_patchwise.sh  # PatchTST_REPA: Chronos with patch_wise contrastive loss
+sh ./scripts/PatchTST.sh   # Original PatchTST (baseline)
+sh ./scripts/mantis.sh     # PatchTST_REPA: PatchTST + Mantis feature alignment
+sh ./scripts/Chronos2.sh   # PatchTST_REPA: PatchTST + Chronos2 feature alignment (patch_wise)
 ```
 
 ### Training Log Format
@@ -224,7 +223,7 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `feature_extractor`: Feature extractor for contrastive loss: `tivit`, `mantis` or `chronos` (default: `mantis`)
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
-- `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (interpolate then per-patch) (default: `mean_pool`)
+- `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (per-patch similarity with consistent patch_num) (default: `mean_pool`)
 
 Note:
 - Best model is automatically saved in memory during training and loaded for test
@@ -248,9 +247,9 @@ PatchTST/
 ├── exp/                        # Experiment classes
 ├── data_provider/              # Data loading
 ├── scripts/                    # Training scripts
-│   ├── etth1_PatchTST.sh      # Original PatchTST (baseline)
-│   ├── etth1_mantis.sh        # PatchTST + Mantis feature alignment
-│   └── etth1_Chronos2.sh      # PatchTST + Chronos2 feature alignment
+│   ├── PatchTST.sh           # Original PatchTST (baseline)
+│   ├── mantis.sh             # PatchTST + Mantis feature alignment
+│   └── Chronos2.sh           # PatchTST + Chronos2 feature alignment (patch_wise)
 ├── diagnose_results/           # Debug scripts
 ├── Formers/                    # Baseline models
 ├── utils/                      # Utilities
@@ -383,7 +382,7 @@ Chronos module uses Chronos2 from Amazon for feature extraction.
 - Pre-trained on multiple time series datasets
 - Supports two contrastive loss types:
   - `mean_pool`: Mean pool over patches before computing similarity
-  - `patch_wise`: Interpolate zs_project to match zs_tilde patch count, compute per-patch similarity
+  - `patch_wise`: Interpolation done in data prep (batch_y interpolated to seq_len), compute per-patch similarity with consistent patch_num
 
 ## Datasets
 
@@ -409,6 +408,6 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
   - Model parameters and architecture match original PatchTST exactly (verified via `diagnose_results/compare_models.py`)
 - **Best model in memory**: Best model is now saved in memory during training and automatically loaded for test (no checkpoint file saved by default)
 - **Mean pooling moved to contrastive loss**: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model (both zs_project and zs_tilde are mean pooled for mean_pool type)
-- **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches for both zs_project and zs_tilde) and `patch_wise` (interpolate zs_project to match zs_tilde patch count, compute per-patch similarity)
+- **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches for both zs_project and zs_tilde) and `patch_wise` (per-patch similarity; for Chronos, batch_y is interpolated to seq_len in data prep to keep patch_num consistent)
 - **Training log format**: Fixed to use 3 decimal places for cost time, 4 decimal places scientific notation for lr, and `***` prefix at end of line for best model updates
 - **is_best_update error**: Fixed local variable referenced before assignment error by computing vali_loss before using is_best_update
