@@ -86,6 +86,17 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001
 ```
 
+### Running PatchTST with Quantile Head
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --head_type quantile --num_quantiles 20
+```
+This trains PatchTST with a quantile prediction head that outputs 20 quantiles (0.01, 0.05, 0.1, ..., 0.99). The model uses Quantile Loss (Pinball Loss) during training and outputs the median quantile (q=0.5) for inference.
+
 Or use provided shell scripts:
 ```bash
 sh ./scripts/PatchTST.sh   # Original PatchTST (baseline)
@@ -125,6 +136,12 @@ Steps: 50 | Train Loss: 0.1234567 | Train MSE: 0.1000000 | Train Contrastive: 0.
 
 5. **TiViT** (`layers/Tivit.py`): Time series to ViT embedding - converts time series to images and uses pre-trained ViT for feature extraction
 
+6. **Quantile_Head** (`layers/PatchTST_backbone.py`): Quantile prediction head similar to Chronos2
+   - Uses ResidualBlock (Linear → GELU → Linear + residual)
+   - Output dimension: `(bs, nvars, num_quantiles, pred_len)`
+   - Supports 20 quantiles by default (0.01, 0.05, 0.1, ..., 0.99)
+   - Uses Quantile Loss (Pinball Loss) for training
+
 ### Data Flow
 ```
 Input (Batch, Input Length, Channels)
@@ -133,7 +150,8 @@ Input (Batch, Input Length, Channels)
 ```
 
 **Model Output**: The model returns:
-- When using `PatchTST` model: only `output` (original PatchTST)
+- When using `PatchTST` model with `head_type=flatten`: only `output` (original PatchTST), shape `(batch, pred_len, nvars)`
+- When using `PatchTST` model with `head_type=quantile`: `output` with shape `(batch, pred_len, nvars, num_quantiles)`
 - When using `PatchTST_REPA` model with `return_projector=False`: tuple `(output, zs)`
 - When using `PatchTST_REPA` model with `return_projector=True`: tuple `(output, zs, zs_tilde)`
 - `output`: Final prediction output
@@ -160,6 +178,27 @@ The system combines PatchTST with a feature extractor for enhanced feature repre
 4. **Contrastive Loss**: Aligns PatchTST projected features with feature extractor features
    - Combined loss: `MSE_loss + lambda * contrastive_loss`
    - Default lambda: 0.5
+
+### Quantile Prediction Head
+
+PatchTST now supports quantile prediction head similar to Chronos2:
+
+1. **Quantile_Head** (`layers/PatchTST_backbone.py`):
+   - Input: `(bs, nvars, d_model, input_patch_num)` from encoder
+   - Flatten all patches: `(bs, nvars, d_model * input_patch_num)`
+   - ResidualBlock: `d_model * input_patch_num` → `d_ff (= head_nf)` → `output_patch_num * num_quantiles * output_patch_size` with residual connection
+   - Rearrange to: `(bs, nvars, num_quantiles, pred_len)`
+   - Output: `(bs, nvars, num_quantiles, pred_len)`
+
+2. **Quantile Loss** (`exp/exp_main.py`):
+   - Implements Pinball Loss: `2 * |(y - ŷ) * (I(y < ŷ) - q)|`
+   - Quantiles: 20 evenly spaced from 0.01 to 0.99
+   - During training: uses all quantiles for loss computation
+   - During inference: outputs median quantile (q=0.5) as point prediction
+
+3. **Output Shape**:
+   - Training: `(batch, pred_len, nvars, num_quantiles)`
+   - Inference: `(batch, pred_len, nvars)` (median quantile)
 
 ### Complete Shape Transformation (ETTh1 + Mantis Example)
 
@@ -224,6 +263,8 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
 - `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (per-patch similarity with consistent patch_num) (default: `mean_pool`)
+- `head_type`: Prediction head type: `flatten` (point prediction with MSE loss) or `quantile` (quantile prediction with Quantile Loss) (default: `flatten`)
+- `num_quantiles`: Number of quantiles for quantile_head (default: 20)
 
 Note:
 - Best model is automatically saved in memory during training and loaded for test
@@ -384,6 +425,93 @@ Chronos module uses Chronos2 from Amazon for feature extraction.
   - `mean_pool`: Mean pool over patches before computing similarity
   - `patch_wise`: Interpolation done in data prep (batch_y interpolated to seq_len), compute per-patch similarity with consistent patch_num
 
+### Chronos2 Architecture and Prediction
+
+Chronos2 uses a T5-based encoder architecture with patch-based input/output.
+
+#### Token Sequence Construction
+
+```
+[Past Tokens] + [REG Token] + [Future Tokens (masked)]
+   ↓                ↓               ↓
+num_context_patches  1           num_output_patches
+```
+
+The input processing:
+1. **Patching**: Input sequence is split into patches of size `input_patch_size` (16) with stride `input_patch_stride` (16)
+2. **Embedding**: Each patch is embedded via `input_patch_embedding` (Linear: 16 → 768)
+3. **Special Tokens**: If `use_reg_token=True`, a REG (representation) token is appended
+4. **Future Tokens**: Masked future patches are appended for the decoder
+
+#### Prediction Mechanism
+
+The prediction process (from `chronos/chronos2/model.py`):
+
+```python
+# 1. Get encoder output
+hidden_states = encoder_outputs[0]  # (batch, num_context_patches + 1 + num_output_patches, d_model)
+
+# 2. Slice last num_output_patches hidden states
+forecast_embeds = hidden_states[:, -num_output_patches:]  # (batch, num_output_patches, 768)
+
+# 3. output_patch_embedding (ResidualBlock)
+quantile_preds = self.output_patch_embedding(forecast_embeds)
+# ResidualBlock: Linear(768→3072) → ReLU → Linear(3072→320) + Linear(768→320) residual
+# Output: (batch, num_output_patches, 320) where 320 = 20 quantiles × 16 output_patch_size
+
+# 4. Reshape to quantile predictions
+quantile_preds = rearrange(quantile_preds, "b n (q p) -> b q (n p)", ...)
+# Output: (batch, 20, num_output_patches * 16) = (batch, 20, pred_len)
+```
+
+#### Quantile Loss
+
+Chronos2 uses **Quantile Loss (Pinball Loss)** to train the model with a single observation but 20 quantile predictions.
+
+**Formula:**
+```
+quantile_loss = 2 * |(y - ŷ) * (I(y < ŷ) - q)|
+```
+
+Where:
+- `y`: ground truth (broadcast to match prediction shape)
+- `ŷ`: quantile prediction
+- `q`: quantile value (0.01, 0.05, 0.1, ..., 0.99)
+- `I`: indicator function
+
+**Mathematical form:**
+$$
+\mathcal{L}_q(y, \hat{y}) =
+\begin{cases}
+q \cdot (y - \hat{y}) & \text{if } y \geq \hat{y} \\
+(q - 1) \cdot (y - \hat{y}) & \text{if } y < \hat{y}
+\end{cases}
+$$
+
+**Intuition:**
+- For low quantiles (q=0.1): Model is penalized less when predicting low values
+- For high quantiles (q=0.9): Model is penalized less when predicting high values
+- For median (q=0.5): Similar to MSE loss
+
+**Output:**
+- Shape: `(batch, 20, pred_len)` - 20 quantile predictions for each time step
+- Can extract specific quantile (e.g., q=0.5 for point prediction) or compute prediction intervals (e.g., q=0.9 - q=0.1)
+
+#### Key Configuration (from `Chronos2/config.json`)
+
+```json
+{
+  "d_model": 768,
+  "input_patch_size": 16,
+  "input_patch_stride": 16,
+  "output_patch_size": 16,
+  "quantiles": [0.01, 0.05, 0.1, ..., 0.99],  // 20 quantiles
+  "num_layers": 12,
+  "num_heads": 12,
+  "d_ff": 3072
+}
+```
+
 ## Datasets
 
 Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, weather, illness, exchange_rate, ili (download from Autoformer drive).
@@ -411,3 +539,4 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Chronos contrastive_type**: Added `contractive_type` hyperparameter with two options: `mean_pool` (mean pooling over patches for both zs_project and zs_tilde) and `patch_wise` (per-patch similarity; for Chronos, batch_y is interpolated to seq_len in data prep to keep patch_num consistent)
 - **Training log format**: Fixed to use 3 decimal places for cost time, 4 decimal places scientific notation for lr, and `***` prefix at end of line for best model updates
 - **is_best_update error**: Fixed local variable referenced before assignment error by computing vali_loss before using is_best_update
+- **Quantile prediction head**: Added `head_type` and `num_quantiles` hyperparameters to support quantile prediction (similar to Chronos2) with Quantile Loss (Pinball Loss). Uses flatten-all-then-project approach: `d_model * input_patch_num` → `d_ff (=head_nf)` → `output_patch_num * num_quantiles * 16`.

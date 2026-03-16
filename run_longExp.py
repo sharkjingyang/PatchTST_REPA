@@ -67,6 +67,10 @@ if __name__ == '__main__':
     parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'], help='Feature extractor for contrastive loss: tivit, mantis or chronos')
     parser.add_argument('--mantis_pretrained', type=str, default='./Mantis', help='Mantis pretrained model path')
     parser.add_argument('--chronos_pretrained', type=str, default='./Chronos2', help='Chronos pretrained model path')
+    parser.add_argument('--head_type', type=str, default='flatten', choices=['flatten', 'quantile'],
+                        help='Prediction head type: flatten for point prediction, quantile for quantile prediction')
+    parser.add_argument('--num_quantiles', type=int, default=20,
+                        help='Number of quantiles for quantile head')
     parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')

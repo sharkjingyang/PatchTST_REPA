@@ -29,23 +29,25 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, projector_dim: int = 768, use_projector: int = 0, verbose:bool=False, **kwargs):
-        
+                 encoder_depth: int = 2, projector_dim: int = 768, use_projector: int = 0,
+                 num_quantiles: int = 20,
+                 verbose:bool=False, **kwargs):
+
         super().__init__()
-        
+
         # RevIn
         self.revin = revin
         if self.revin: self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
-        
+
         # Patching
         self.patch_len = patch_len
         self.stride = stride
         self.padding_patch = padding_patch
         patch_num = int((context_window - patch_len)/stride + 1)
         if padding_patch == 'end': # can be modified to general case
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride)) 
+            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
-        
+
         # Backbone
         self.encoder_depth = encoder_depth
         self.backbone = TSTiEncoder(c_in, patch_num=patch_num, patch_len=patch_len, max_seq_len=max_seq_len,
@@ -61,9 +63,13 @@ class PatchTST_backbone(nn.Module):
         self.head_type = head_type
         self.individual = individual
         self.target_window = target_window
+        self.num_quantiles = num_quantiles
 
         if self.pretrain_head:
             self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout) # custom head passed as a partial func with all its kwargs
+        elif head_type == 'quantile':
+            self.head = Quantile_Head(self.n_vars, d_model, patch_num, target_window,
+                                       num_quantiles=num_quantiles, dropout=head_dropout)
         elif head_type == 'flatten':
             self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
@@ -104,13 +110,29 @@ class PatchTST_backbone(nn.Module):
             z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
             zs_projected = None
 
-        output = self.head(z)                                                               # z: [bs x nvars x target_window]
+        output = self.head(z)                                                               # z: [bs x nvars x target_window] or [bs x nvars x num_quantiles x target_window]
 
-        # denorm
+        # denorm - 需要针对分位数输出特殊处理
         if self.revin:
-            output = output.permute(0,2,1)
-            output = self.revin_layer(output, 'denorm')
-            output = output.permute(0,2,1)
+            if self.head_type == 'quantile':
+                # output: (bs, nvars, num_quantiles, pred_len)
+                # RevIN expects: (bs, seq_len, nvars)
+                # Need to apply denorm to each quantile separately or repeat the stats
+                bs, nvars, num_quantiles, pred_len = output.shape
+                # For each quantile, we apply the same denorm (since we don't have separate stats per quantile)
+                # Approach: apply denorm per quantile by treating each quantile as a separate channel
+                output_per_quantile = []
+                for q in range(num_quantiles):
+                    out_q = output[:, :, q, :]  # (bs, nvars, pred_len)
+                    out_q = out_q.permute(0, 2, 1)  # (bs, pred_len, nvars)
+                    out_q = self.revin_layer(out_q, 'denorm')
+                    out_q = out_q.permute(0, 2, 1)  # (bs, nvars, pred_len)
+                    output_per_quantile.append(out_q)
+                output = torch.stack(output_per_quantile, dim=2)  # (bs, nvars, num_quantiles, pred_len)
+            else:
+                output = output.permute(0,2,1)
+                output = self.revin_layer(output, 'denorm')
+                output = output.permute(0,2,1)
 
         # Original PatchTST: return only output when use_projector=0
         if self.use_projector:
@@ -127,10 +149,10 @@ class PatchTST_backbone(nn.Module):
 class Flatten_Head(nn.Module):
     def __init__(self, individual, n_vars, nf, target_window, head_dropout=0):
         super().__init__()
-        
+
         self.individual = individual
         self.n_vars = n_vars
-        
+
         if self.individual:
             self.linears = nn.ModuleList()
             self.dropouts = nn.ModuleList()
@@ -143,7 +165,7 @@ class Flatten_Head(nn.Module):
             self.flatten = nn.Flatten(start_dim=-2)
             self.linear = nn.Linear(nf, target_window)
             self.dropout = nn.Dropout(head_dropout)
-            
+
     def forward(self, x):                                 # x: [bs x nvars x d_model x patch_num]
         if self.individual:
             x_out = []
@@ -158,6 +180,70 @@ class Flatten_Head(nn.Module):
             x = self.linear(x)
             x = self.dropout(x)
         return x
+
+
+class Quantile_Head(nn.Module):
+    """类似 Chronos2 的分位数预测头 - 每个 patch 独立预测
+
+    Chronos2 方式:
+    - 输入: (bs, nvars, d_model, input_patch_num) 来自encoder
+    - 每个patch独立经过ResidualBlock: d_model -> d_ff -> num_quantiles * output_patch_size
+    - 选择最后 output_patch_num 个patch的输出
+    - Rearrange: (bs, nvars, output_patch_num, num_quantiles * output_patch_size) -> (bs, nvars, num_quantiles, pred_len)
+
+    输出维度: (bs, nvars, num_quantiles, pred_len)
+    """
+    def __init__(self, n_vars, d_model, input_patch_num, pred_len, num_quantiles=20, dropout=0.0):
+        super().__init__()
+        self.n_vars = n_vars
+        self.d_model = d_model
+        self.input_patch_num = input_patch_num
+        self.pred_len = pred_len
+        self.num_quantiles = num_quantiles
+        self.output_patch_size = 16  # 与 Chronos2 一致
+
+        # 根据 pred_len 计算 output_patch_num
+        # 例如 pred_len=96, output_patch_size=16 -> output_patch_num=6
+        assert pred_len % self.output_patch_size == 0, f"pred_len must be divisible by output_patch_size, got pred_len={pred_len}"
+        self.output_patch_num = pred_len // self.output_patch_size
+
+        # 计算 d_ff，直接使用 head_nf 不压缩
+        head_nf = d_model * input_patch_num
+        d_ff = head_nf  # 不压缩，避免信息损失
+
+        # ResidualBlock: (d_model * input_patch_num) -> d_ff -> (output_patch_num * num_quantiles * output_patch_size)
+        self.hidden = nn.Linear(head_nf, d_ff)
+        self.act = nn.GELU()
+        self.output = nn.Linear(d_ff, self.output_patch_num * num_quantiles * self.output_patch_size)
+        self.residual = nn.Linear(head_nf, self.output_patch_num * num_quantiles * self.output_patch_size)
+        self.dropout = nn.Dropout(dropout)
+
+        # 注册 quantiles buffer
+        quantiles = torch.linspace(0.01, 0.99, num_quantiles)
+        self.register_buffer('quantiles', quantiles)
+
+    def forward(self, x):  # x: (bs, nvars, d_model, input_patch_num)
+        # x: (bs, nvars, d_model, input_patch_num)
+        # 拼接所有 patch 的信息: (bs, nvars, d_model * input_patch_num)
+        x = x.reshape(x.size(0), x.size(1), -1)  # (bs, nvars, d_model * input_patch_num)
+
+        # 一次性投影所有信息到输出空间
+        # 输入: (bs, nvars, d_model * input_patch_num)
+        # 输出: (bs, nvars, output_patch_num * num_quantiles * output_patch_size)
+        hid = self.act(self.hidden(x))  # (bs, nvars, d_ff)
+        out = self.dropout(self.output(hid))  # (bs, nvars, output_patch_num * num_quantiles * 16)
+        res = self.residual(x)  # (bs, nvars, output_patch_num * num_quantiles * 16)
+        out = out + res  # (bs, nvars, output_patch_num * num_quantiles * 16)
+
+        # Rearrange: (bs, nvars, output_patch_num * num_quantiles * 16) -> (bs, nvars, num_quantiles, pred_len)
+        bs, nvars, _ = out.shape
+        out = out.reshape(bs, nvars, self.output_patch_num, self.num_quantiles, self.output_patch_size)
+        # out shape: (bs, nvars, output_patch_num, num_quantiles, 16)
+        out = out.permute(0, 1, 3, 2, 4)  # (bs, nvars, num_quantiles, output_patch_num, 16)
+        out = out.reshape(bs, nvars, self.num_quantiles, self.output_patch_size * self.output_patch_num)
+        # out shape: (bs, nvars, num_quantiles, pred_len)
+
+        return out
         
         
     

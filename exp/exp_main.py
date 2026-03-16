@@ -20,6 +20,37 @@ import numpy as np
 
 warnings.filterwarnings('ignore')
 
+
+class QuantileLoss(nn.Module):
+    """分位数损失 (Quantile Loss / Pinball Loss)
+
+    pred: (bs, nvars, num_quantiles, pred_len)
+    target: (bs, pred_len, nvars)
+    """
+    def __init__(self, num_quantiles=20):
+        super().__init__()
+        # Chronos2 的分位数: [0.01, 0.05, 0.1, 0.15, ..., 0.99]
+        quantiles = torch.linspace(0.01, 0.99, num_quantiles)
+        self.register_buffer('quantiles', quantiles)
+
+    def forward(self, pred, target):
+        """
+        pred: (bs, nvars, num_quantiles, pred_len)
+        target: (bs, pred_len, nvars)
+        """
+        # 调整 target 维度: target -> (bs, nvars, 1, pred_len)
+        target = target.permute(0, 2, 1).unsqueeze(2)  # (bs, nvars, 1, pred_len)
+
+        # 广播到相同维度
+        # pred: (bs, nvars, num_quantiles, pred_len)
+        # target: (bs, nvars, num_quantiles, pred_len) after broadcasting
+
+        # Quantile loss formula: 2 * |(y - ŷ) * (I(y < ŷ) - q)|
+        quantile_loss = 2 * torch.abs(
+            (target - pred) * ((target <= pred).float() - self.quantiles.view(1, 1, -1, 1))
+        )
+        return quantile_loss.mean()
+
 class Exp_Main(Exp_Basic):
     def __init__(self, args):
         super(Exp_Main, self).__init__(args)
@@ -112,7 +143,13 @@ class Exp_Main(Exp_Basic):
 
     def _select_criterion(self):
         # MSE loss for prediction
-        criterion = nn.MSELoss()
+        head_type = getattr(self.args, 'head_type', 'flatten')
+        if head_type == 'quantile':
+            # 使用分位数损失
+            num_quantiles = getattr(self.args, 'num_quantiles', 20)
+            criterion = QuantileLoss(num_quantiles=num_quantiles)
+        else:
+            criterion = nn.MSELoss()
         return criterion
 
     def _compute_contrastive_loss(self, zs_project, zs_tilde):
@@ -166,6 +203,9 @@ class Exp_Main(Exp_Basic):
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
+        head_type = getattr(self.args, 'head_type', 'flatten')
+        num_quantiles = getattr(self.args, 'num_quantiles', 20)
+
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
@@ -201,6 +241,15 @@ class Exp_Main(Exp_Basic):
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
+                # Handle quantile head output
+                if head_type == 'quantile':
+                    # outputs: (bs, pred_len, nvars, num_quantiles)
+                    # Select median quantile (q=0.5) for validation
+                    mid_quantile = num_quantiles // 2
+                    outputs = outputs[:, :, :, mid_quantile]  # (bs, pred_len, nvars)
+                    # Already in (bs, pred_len, nvars) format
+
                 f_dim = 0 if self.args.features == 'M' else -1
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
@@ -321,13 +370,31 @@ class Exp_Main(Exp_Basic):
 
                         else:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark, batch_y)
+
+                    # Handle quantile head output
+                    head_type = getattr(self.args, 'head_type', 'flatten')
+                    num_quantiles = getattr(self.args, 'num_quantiles', 20)
+
+                    if head_type == 'quantile':
+                        # outputs: (bs, pred_len, nvars, num_quantiles)
+                        # For loss computation: select median quantile and adjust shape
+                        mid_quantile = num_quantiles // 2
+                        outputs_for_loss = outputs[:, :, :, mid_quantile]  # (bs, pred_len, nvars)
+                    else:
+                        outputs_for_loss = outputs
+
                     # print(outputs.shape,batch_y.shape)
                     f_dim = 0 if self.args.features == 'M' else -1
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:] if head_type != 'quantile' else outputs
                     batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
-                    # MSE loss for prediction
-                    mse_loss = criterion(outputs, batch_y_pred)
+                    # MSE loss for prediction (use median quantile output for quantile head)
+                    if head_type == 'quantile':
+                        # Need to adjust outputs_for_loss shape for criterion
+                        outputs_for_loss_fdim = outputs_for_loss[:, -self.args.pred_len:, f_dim:] if f_dim == 0 else outputs_for_loss
+                        mse_loss = criterion(outputs_for_loss_fdim, batch_y_pred)
+                    else:
+                        mse_loss = criterion(outputs, batch_y_pred)
 
                     # Contrastive loss for feature alignment (only when use_projector=1)
                     use_projector = getattr(self.args, 'use_projector', 0)
@@ -454,7 +521,7 @@ class Exp_Main(Exp_Basic):
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
-        
+
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
@@ -465,6 +532,9 @@ class Exp_Main(Exp_Basic):
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
+
+        head_type = getattr(self.args, 'head_type', 'flatten')
+        num_quantiles = getattr(self.args, 'num_quantiles', 20)
 
         self.model.eval()
         with torch.no_grad():
@@ -503,6 +573,13 @@ class Exp_Main(Exp_Basic):
 
                         else:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
+                # Handle quantile head output
+                if head_type == 'quantile':
+                    # outputs: (bs, pred_len, nvars, num_quantiles)
+                    # Select median quantile (q=0.5) for output
+                    mid_quantile = num_quantiles // 2
+                    outputs = outputs[:, :, :, mid_quantile]  # (bs, pred_len, nvars)
 
                 f_dim = 0 if self.args.features == 'M' else -1
                 # print(outputs.shape,batch_y.shape)

@@ -13,7 +13,7 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=720
+pred_len=96
 
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
@@ -41,6 +41,8 @@ python -u run_longExp.py \
   --head_dropout 0\
   --patch_len 16\
   --stride 16\
+  --ending None\
+  --head_type quantile\
   --des 'Exp' \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \

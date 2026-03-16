@@ -148,6 +148,10 @@ class Model(nn.Module):
             pass
             pass
 
+        # Prediction head parameters
+        head_type = getattr(configs, 'head_type', 'flatten')
+        num_quantiles = getattr(configs, 'num_quantiles', 20)
+
         # model
         self.decomposition = decomposition
         if self.decomposition:
@@ -162,7 +166,8 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+                                      use_projector=self.use_projector, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
                 self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                       n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -171,7 +176,8 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+                                      use_projector=self.use_projector, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
             else:
                 # Original PatchTST: no projector params
                 self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -181,7 +187,8 @@ class Model(nn.Module):
                                       attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
+                                      subtract_last=subtract_last, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
                 self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                       n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -189,7 +196,8 @@ class Model(nn.Module):
                                       attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
+                                      subtract_last=subtract_last, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
         else:
             # Use projector only if use_projector=1
             if self.use_projector:
@@ -201,7 +209,8 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, verbose=verbose, **kwargs)
+                                      use_projector=self.use_projector, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
             else:
                 # Original PatchTST: no projector params
                 self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -211,7 +220,8 @@ class Model(nn.Module):
                                       attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, verbose=verbose, **kwargs)
+                                      subtract_last=subtract_last, head_type=head_type, num_quantiles=num_quantiles,
+                                      verbose=verbose, **kwargs)
     
     
     def forward(self, x, target=None, return_projector=False):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
@@ -232,15 +242,27 @@ class Model(nn.Module):
         else:
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
 
+            # Check head_type
+            head_type = getattr(self.model, 'head_type', 'flatten') if hasattr(self, 'model') else 'flatten'
+
             # Original PatchTST (use_projector=0): return only output
             if not self.use_projector:
                 output = self.model(x)  # returns only output
-                output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
-                return output
+                if head_type == 'quantile':
+                    # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
+                    output = output.permute(0, 3, 1, 2)  # (bs, pred_len, nvars, num_quantiles)
+                    return output
+                else:
+                    output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
+                    return output
 
             # With projector (use_projector=1): return output and zs
             output, zs = self.model(x)  # returns (output, zs_projected)
-            output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
+            if head_type == 'quantile':
+                # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
+                output = output.permute(0, 3, 1, 2)  # (bs, pred_len, nvars, num_quantiles)
+            else:
+                output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
 
             # Only extract feature extractor features when return_projector=True (training)
             # Note: target should already be sliced to pred_len in exp_main.py
