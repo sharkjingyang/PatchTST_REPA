@@ -18,7 +18,7 @@ pred_len=720
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
 contrastive_type='patch_wise'
-head_type='flatten'
+head_type='patchwise'
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -52,7 +52,4 @@ python -u run_longExp.py \
   --contrastive_type $contrastive_type \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
-  --tivit_pretrained ./open_clip/open_clip_model.safetensors \
-  --mantis_pretrained ./Mantis \
-  --chronos_pretrained ./Chronos2 \
   >logs/LongForecasting/${data_name}_${feature_extractor}_${contrastive_type}_${seq_len}_${pred_len}.log

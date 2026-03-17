@@ -190,9 +190,11 @@ class PatchTST_backbone(nn.Module):
                 dropout=dropout
             )
 
-            # Patchwise Head for fused branch (instead of Flatten_Head)
-            # Uses shared ResidualBlock per patch, similar to Chronos2
-            if head_type == 'flatten':
+            # Head for Channel Fusion branch
+            # Options: 'flatten' (Flatten_Head), 'patchwise' (PatchwiseHead), 'quantile' (Quantile_Head)
+            if head_type == 'patchwise':
+                # Patchwise Head: uses shared ResidualBlock per patch, similar to Chronos2
+                # Reduces parameters from ~24M to ~300K
                 self.head = PatchwiseHead(
                     n_vars=self.n_vars,
                     d_model=d_extractor,
@@ -200,6 +202,14 @@ class PatchTST_backbone(nn.Module):
                     output_patch_size=output_patch_size,
                     dropout=head_dropout
                 )
+            elif head_type == 'flatten':
+                # Flatten Head: flatten all patches then linear project
+                self.head = Flatten_Head(self.individual, self.n_vars, d_extractor * output_patch_num,
+                                         target_window, head_dropout=head_dropout)
+            elif head_type == 'quantile':
+                # Quantile Head: for probabilistic forecasting
+                self.head = Quantile_Head(self.n_vars, d_extractor, output_patch_num,
+                                          target_window, num_quantiles=num_quantiles, dropout=head_dropout)
         
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
