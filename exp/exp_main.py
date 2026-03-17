@@ -257,7 +257,8 @@ class Exp_Main(Exp_Basic):
                 pred = outputs.detach().cpu()
                 true = batch_y.detach().cpu()
 
-                loss = criterion(pred, true)
+                # Use MSE for validation and test (regardless of head_type)
+                loss = nn.MSELoss()(pred, true)
 
                 total_loss.append(loss)
         total_loss = np.average(total_loss)
@@ -375,24 +376,19 @@ class Exp_Main(Exp_Basic):
                     head_type = getattr(self.args, 'head_type', 'flatten')
                     num_quantiles = getattr(self.args, 'num_quantiles', 20)
 
-                    if head_type == 'quantile':
-                        # outputs: (bs, pred_len, nvars, num_quantiles)
-                        # For loss computation: select median quantile and adjust shape
-                        mid_quantile = num_quantiles // 2
-                        outputs_for_loss = outputs[:, :, :, mid_quantile]  # (bs, pred_len, nvars)
-                    else:
-                        outputs_for_loss = outputs
-
                     # print(outputs.shape,batch_y.shape)
                     f_dim = 0 if self.args.features == 'M' else -1
                     outputs = outputs[:, -self.args.pred_len:, f_dim:] if head_type != 'quantile' else outputs
                     batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
-                    # MSE loss for prediction (use median quantile output for quantile head)
+                    # Loss computation
                     if head_type == 'quantile':
-                        # Need to adjust outputs_for_loss shape for criterion
-                        outputs_for_loss_fdim = outputs_for_loss[:, -self.args.pred_len:, f_dim:] if f_dim == 0 else outputs_for_loss
-                        mse_loss = criterion(outputs_for_loss_fdim, batch_y_pred)
+                        # outputs: (bs, pred_len, nvars, num_quantiles)
+                        # QuantileLoss expects: pred (bs, nvars, num_quantiles, pred_len), target (bs, pred_len, nvars)
+                        # Permute outputs to match: (bs, nvars, num_quantiles, pred_len)
+                        outputs_for_quantile = outputs.permute(0, 2, 3, 1)  # (bs, nvars, num_quantiles, pred_len)
+                        # batch_y_pred: (bs, pred_len, nvars) already matches target shape
+                        mse_loss = criterion(outputs_for_quantile, batch_y_pred)
                     else:
                         mse_loss = criterion(outputs, batch_y_pred)
 
