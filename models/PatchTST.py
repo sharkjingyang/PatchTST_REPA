@@ -65,13 +65,42 @@ class Model(nn.Module):
         encoder_depth = configs.encoder_depth
         projector_dim = getattr(configs, 'projector_dim', 768)
 
+        # Model type detection
+        self.model_name = configs.model  # PatchTST, PatchTST_REPA, PatchTST_REPA_Fusion
+
+        # Set use_projector and use_channel_fusion based on model_name
+        if self.model_name == 'PatchTST_REPA':
+            self.use_projector = 1
+            self.use_channel_fusion = False
+        elif self.model_name == 'PatchTST_REPA_Fusion':
+            self.use_projector = 1
+            self.use_channel_fusion = True
+        else:  # PatchTST
+            self.use_projector = 0
+            self.use_channel_fusion = False
+
         # Feature extractor parameters
-        self.use_projector = getattr(configs, 'use_projector', 0)  # 1: use projector, 0: original PatchTST
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
         mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
 
-        # Auto-adjust projector_dim based on feature extractor (only when use_projector=1)
-        if self.use_projector:
+        # Channel fusion parameters
+        output_patch_size = getattr(configs, 'output_patch_size', 16)
+        channel_fusion_n_heads = getattr(configs, 'channel_fusion_n_heads', 4)
+        d_layers = getattr(configs, 'd_layers', 1)  # Transformer Decoder layers
+
+        # d_extractor: based on feature extractor (Mantis=256, TiViT/Chronos=768)
+        if self.model_name == 'PatchTST_REPA_Fusion':
+            if feature_extractor == 'mantis':
+                d_extractor = 256
+                print(f"Using channel fusion with Mantis, d_extractor={d_extractor}")
+            else:
+                d_extractor = 768  # TiViT or Chronos
+                print(f"Using channel fusion with {feature_extractor}, d_extractor={d_extractor}")
+        else:
+            d_extractor = 768  # default
+
+        # Auto-adjust projector_dim based on feature extractor (only for REPA models)
+        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
             if feature_extractor == 'mantis':
                 projector_dim = 256  # Mantis output dimension
                 print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
@@ -97,12 +126,12 @@ class Model(nn.Module):
         self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
         self.chronos_output_dim = 768  # Chronos2 default output dimension
 
-        # Build feature extractor (TiViT, Mantis or Chronos) only when use_projector=1
+        # Build feature extractor (TiViT, Mantis or Chronos) only when using REPA model
         self.tivit = None
         self.mantis = None
         self.chronos = None
 
-        if self.use_projector:
+        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
             if self.feature_extractor == 'tivit':
                 # Build TiViT
                 full_seq_len = context_window + target_window
@@ -156,8 +185,8 @@ class Model(nn.Module):
         self.decomposition = decomposition
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
-            # Use projector only if use_projector=1
-            if self.use_projector:
+            # Use projector if model_name is PatchTST_REPA or PatchTST_REPA_Fusion
+            if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
                 self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                       n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -167,6 +196,8 @@ class Model(nn.Module):
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
                                       use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      output_patch_size=output_patch_size, use_channel_fusion=self.use_channel_fusion,
+                                      channel_fusion_n_heads=channel_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       verbose=verbose, **kwargs)
                 self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
@@ -177,6 +208,8 @@ class Model(nn.Module):
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
                                       use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      output_patch_size=output_patch_size,
+                                      channel_fusion_n_heads=channel_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       verbose=verbose, **kwargs)
             else:
                 # Original PatchTST: no projector params
@@ -210,6 +243,8 @@ class Model(nn.Module):
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
                                       use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      output_patch_size=output_patch_size, use_channel_fusion=self.use_channel_fusion,
+                                      channel_fusion_n_heads=channel_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       verbose=verbose, **kwargs)
             else:
                 # Original PatchTST: no projector params
@@ -257,12 +292,12 @@ class Model(nn.Module):
                     return output
 
             # With projector (use_projector=1): return output and zs
-            output, zs = self.model(x)  # returns (output, zs_projected)
-            if head_type == 'quantile':
-                # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
-                output = output.permute(0, 3, 1, 2)  # (bs, pred_len, nvars, num_quantiles)
+            # Check if using channel_fusion (returns tuple of 2)
+            if self.use_channel_fusion:
+                output, zs = self.model(x)  # returns (output2, zs_projected) - only channel fusion branch
             else:
-                output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
+                # Original: return (output, zs_projected)
+                output, zs = self.model(x)  # returns (output, zs_projected)
 
             # Only extract feature extractor features when return_projector=True (training)
             # Note: target should already be sliced to pred_len in exp_main.py

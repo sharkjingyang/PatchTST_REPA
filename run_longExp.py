@@ -71,7 +71,11 @@ if __name__ == '__main__':
                         help='Prediction head type: flatten for point prediction, quantile for quantile prediction')
     parser.add_argument('--num_quantiles', type=int, default=20,
                         help='Number of quantiles for quantile head')
-    parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
+    parser.add_argument('--output_patch_size', type=int, default=16,
+                        help='Output patch size for channel fusion branch (used in PatchTST_REPA_Fusion)')
+    parser.add_argument('--channel_fusion_n_heads', type=int, default=4,
+                        help='Number of attention heads for channel fusion branch (used in PatchTST_REPA_Fusion)')
+    parser.add_argument('--d_layers', type=int, default=1, help='Number of Transformer Decoder layers for channel fusion (used in PatchTST_REPA_Fusion)')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')
