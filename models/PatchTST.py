@@ -355,4 +355,4 @@ class Model(nn.Module):
             if return_projector:
                 return output, zs, zs_tilde
             else:
-                return output, zs
+                return output
