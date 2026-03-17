@@ -41,7 +41,7 @@ python -u run_longExp.py \
   --head_dropout 0\
   --patch_len 16\
   --stride 16\
-  --ending None\
+  --padding_patch None\
   --head_type quantile\
   --des 'Exp' \
   --train_epochs 20\
