@@ -295,9 +295,13 @@ class Model(nn.Module):
             # Check if using channel_fusion (returns tuple of 2)
             if self.use_channel_fusion:
                 output, zs = self.model(x)  # returns (output2, zs_projected) - only channel fusion branch
+                # Permute output from (bs, nvars, pred_len) to (bs, pred_len, nvars)
+                output = output.permute(0, 2, 1)
             else:
                 # Original: return (output, zs_projected)
                 output, zs = self.model(x)  # returns (output, zs_projected)
+                # Permute output from (bs, nvars, pred_len) to (bs, pred_len, nvars)
+                output = output.permute(0, 2, 1)
 
             # Only extract feature extractor features when return_projector=True (training)
             # Note: target should already be sliced to pred_len in exp_main.py
