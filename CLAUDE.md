@@ -215,8 +215,11 @@ Transformer Encoder (d_model)
 ```
 
 **Head Types**:
-- PatchTST and PatchTST_REPA: uses Flatten_Head (point prediction)
-- PatchTST_REPA_Fusion: uses PatchwiseHead (shared ResidualBlock per patch)
+- PatchTST and PatchTST_REPA: uses Flatten_Head or Quantile_Head (controlled by head_type)
+- PatchTST_REPA_Fusion: uses Flatten_Head / PatchwiseHead / Quantile_Head (controlled by head_type: 'flatten', 'patchwise', 'quantile')
+  - 'patchwise': PatchwiseHead with shared ResidualBlock per patch (~300K params)
+  - 'flatten': Flatten_Head with full linear layer (~24M params)
+  - 'quantile': Quantile_Head for probabilistic forecasting
 
 **Three Model Options**:
 1. `model=PatchTST`: Original PatchTST (baseline)
@@ -328,7 +331,7 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
 - `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (per-patch similarity with consistent patch_num) (default: `mean_pool`)
-- `head_type`: Prediction head type: `flatten` (point prediction with MSE loss), `quantile` (quantile prediction with Quantile Loss), or for PatchTST_REPA_Fusion uses `PatchwiseHead` (default: `flatten`)
+- `head_type`: Prediction head type: `flatten` (Flatten_Head for point prediction), `patchwise` (PatchwiseHead for Channel Fusion, reduces params ~98%), `quantile` (Quantile_Head for probabilistic forecasting) (default: `flatten`)
 - `num_quantiles`: Number of quantiles for quantile_head (default: 20)
 - `output_patch_size`: Output patch size for Channel Fusion branch (default: 16). Used to compute output_patch_num = pred_len // output_patch_size
 
@@ -638,3 +641,6 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Unified head**: Renamed `head_fused` to `head` for channel fusion branch to simplify code.
 - **PatchwiseHead for Channel Fusion**: 为 PatchTST_REPA_Fusion 实现 PatchwiseHead，替换 Flatten_Head。使用共享的 ResidualBlock (d_model → d_model//2 → output_patch_size)，大幅减少参数量 (从 24M 降至约 300K)。
 - **Detailed parameter statistics**: 更新参数统计代码，显示每个模块的详细参数量分解 (Backbone, Projector, ChannelFusionMLP, TransformerDecoder, Head, RevIN)。
+- **head_type='patchwise' option**: 添加 head_type='patchwise' 选项，允许在 PatchTST_REPA_Fusion 中选择使用 PatchwiseHead (patchwise) 或 Flatten_Head (flatten)。
+- **Fix return value when return_projector=False**: 修复当 return_projector=False 时模型错误返回 (output, zs) 而不是只返回 output 的问题。
+- **Fix output shape for REPA models**: 修复 PatchTST_REPA 和 PatchTST_REPA_Fusion 的输出形状，添加 permute 使输出为 (bs, pred_len, nvars) 与其他组件一致。
