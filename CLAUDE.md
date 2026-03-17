@@ -64,6 +64,19 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
 ```
 This trains PatchTST with a contrastive loss that aligns PatchTST's projected encoder features with Chronos2-extracted features.
 
+### Running with PatchTST_REPA_Fusion (Channel Fusion)
+```bash
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor chronos --projector_dim 768 \
+  --lambda_contrastive 0.5 \
+  --chronos_pretrained ./Chronos2
+```
+This trains PatchTST with Channel Fusion branch for better Chronos alignment.
+
 ### Running with Chronos patch_wise Contrastive Loss
 ```bash
 python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
@@ -142,6 +155,13 @@ Steps: 50 | Train Loss: 0.1234567 | Train MSE: 0.1000000 | Train Contrastive: 0.
    - Supports 20 quantiles by default (0.01, 0.05, 0.1, ..., 0.99)
    - Uses Quantile Loss (Pinball Loss) for training
 
+7. **PatchwiseHead** (`layers/PatchTST_backbone.py`): Patch-wise prediction head for Channel Fusion
+   - Uses shared ResidualBlock per patch (like Chronos2)
+   - Input: `(bs, nvars, d_model, output_patch_num)` from Channel Fusion
+   - ResidualBlock: `d_model` → `d_model//2` → `output_patch_size` with residual connection
+   - Output: `(bs, nvars, pred_len)`
+   -参数量比 Flatten_Head 更小 (约 300K vs 24M for d_model=768)
+
 ### Data Flow
 ```
 Input (Batch, Input Length, Channels)
@@ -152,11 +172,11 @@ Input (Batch, Input Length, Channels)
 **Model Output**: The model returns:
 - When using `PatchTST` model with `head_type=flatten`: only `output` (original PatchTST), shape `(batch, pred_len, nvars)`
 - When using `PatchTST` model with `head_type=quantile`: `output` with shape `(batch, pred_len, nvars, num_quantiles)`
-- When using `PatchTST_REPA` model with `return_projector=False`: tuple `(output, zs)`
-- When using `PatchTST_REPA` model with `return_projector=True`: tuple `(output, zs, zs_tilde)`
+- When using `PatchTST_REPA` model: tuple `(output, zs)` or `(output, zs, zs_tilde)` depending on return_projector
+- When using `PatchTST_REPA_Fusion` model: uses Channel Fusion branch, tuple `(output, zs)`
 - `output`: Final prediction output
-- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 2), after MLP projector
-- `zs_tilde`: Feature extractor (TiViT/Mantis/Chronos) extracted features from target sequence
+- `zs`: Intermediate output from the encoder layer specified by `encoder_depth` (default: 2)
+- `zs_tilde`: Feature extractor (TiViT/Mantis/Chronos) extracted features from target sequence (only for PatchTST_REPA)
 
 ### Feature Alignment (TiViT, Mantis or Chronos)
 
@@ -178,6 +198,50 @@ The system combines PatchTST with a feature extractor for enhanced feature repre
 4. **Contrastive Loss**: Aligns PatchTST projected features with feature extractor features
    - Combined loss: `MSE_loss + lambda * contrastive_loss`
    - Default lambda: 0.5
+
+### Channel Fusion Branch (model=PatchTST_REPA_Fusion)
+
+When using `model=PatchTST_REPA_Fusion`, an additional branch is added for better Chronos alignment:
+
+**Architecture**:
+```
+Transformer Encoder (d_model)
+  ├─ Branch 1 (original): Encoder output → Flatten Head → pred_1
+  └─ Branch 2 (new):
+       ↓ Extract zs from encoder_depth layer
+       ↓ Channel Fusion MLP: flatten d_model*input_patch_num → Linear → d_extractor*output_patch_num
+       ↓ Two Attention Blocks (d_model=d_extractor)
+       ↓ zs_fused → Patchwise Head → pred_2
+```
+
+**Head Types**:
+- PatchTST and PatchTST_REPA: uses Flatten_Head (point prediction)
+- PatchTST_REPA_Fusion: uses PatchwiseHead (shared ResidualBlock per patch)
+
+**Three Model Options**:
+1. `model=PatchTST`: Original PatchTST (baseline)
+2. `model=PatchTST_REPA`: PatchTST with MLP Projector + contrastive loss
+3. `model=PatchTST_REPA_Fusion`: PatchTST with Channel Fusion branch
+
+**Key Differences**:
+- PatchTST_REPA uses MLP Projector to align encoder features with feature extractor
+- PatchTST_REPA_Fusion uses Channel Fusion MLP (no projector needed)
+- Channel Fusion uses Two Attention Blocks with d_extractor dimension (768 for Chronos)
+- output_patch_num = pred_len // output_patch_size (e.g., 96/16 = 6)
+
+**Shape Transformation Example (Chronos, seq_len=336, pred_len=96)**:
+```
+input_patch_num = 336/16 = 21
+output_patch_num = 96/16 = 6
+d_extractor = 768
+
+Channel Fusion MLP:
+  Input:  (B, nvars, 21, 128)  = (B, nvars, input_patch_num, d_model)
+  Flatten → (B, nvars, 2688)   = (B, nvars, d_model*input_patch_num)
+  Linear → (B, nvars, 4608)    = (B, nvars, d_extractor*output_patch_num)
+  Reshape → (B, nvars, 6, 768) = (B, nvars, output_patch_num, d_extractor)
+  Permute → (B, nvars, 768, 6) = (B, nvars, d_extractor, output_patch_num)
+```
 
 ### Quantile Prediction Head
 
@@ -246,8 +310,9 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256) for Mantis, or (batch, nvars, num_
 Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model.
 
 ### Key Hyperparameters
+- `model`: Model name: `PatchTST` (baseline), `PatchTST_REPA` (projector + contrastive), or `PatchTST_REPA_Fusion` (channel fusion)
 - `patch_len`: Length of each patch (default: 16)
-- `stride`: Stride between patches (default: 8)
+- `stride`: Stride between patches (default: 16)
 - `seq_len`: Input sequence length (look-back window)
 - `pred_len`: Prediction sequence length (forecast horizon)
 - `d_model`: Transformer model dimension
@@ -263,14 +328,40 @@ Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `e
 - `mantis_pretrained`: Mantis pretrained model path (default: `./Mantis`)
 - `chronos_pretrained`: Chronos pretrained model path (default: `./Chronos2`)
 - `contrastive_type`: Contrastive loss type for Chronos: `mean_pool` (mean pooling) or `patch_wise` (per-patch similarity with consistent patch_num) (default: `mean_pool`)
-- `head_type`: Prediction head type: `flatten` (point prediction with MSE loss) or `quantile` (quantile prediction with Quantile Loss) (default: `flatten`)
+- `head_type`: Prediction head type: `flatten` (point prediction with MSE loss), `quantile` (quantile prediction with Quantile Loss), or for PatchTST_REPA_Fusion uses `PatchwiseHead` (default: `flatten`)
 - `num_quantiles`: Number of quantiles for quantile_head (default: 20)
+- `output_patch_size`: Output patch size for Channel Fusion branch (default: 16). Used to compute output_patch_num = pred_len // output_patch_size
 
 Note:
 - Best model is automatically saved in memory during training and loaded for test
-- Projector and feature extractor are only created when using `PatchTST_REPA` model
-- `PatchTST` model runs original PatchTST (baseline)
-- `PatchTST_REPA` model automatically enables projector and contrastive loss
+- Projector and feature extractor are only created when using `PatchTST_REPA` or `PatchTST_REPA_Fusion` model
+- Model selection is done via `--model` parameter: `PatchTST`, `PatchTST_REPA`, or `PatchTST_REPA_Fusion`
+
+### Parameter Statistics
+
+训练时会自动打印详细的参数统计信息，显示每个模块的参数量：
+
+**模型配置**:
+- Model: PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
+- Head type: Flatten_Head / Quantile_Head / PatchwiseHead
+- Channel fusion: True / False
+
+**模块参数量分解**:
+- Backbone (encoder): Transformer 编码器参数量
+- Projector: MLP 投影器参数量 (仅 PatchTST_REPA)
+- ChannelFusionMLP: Channel Fusion MLP 参数量 (仅 PatchTST_REPA_Fusion)
+- TransformerDecoder: Channel Fusion 的 Transformer Decoder 参数量
+- Head: 预测头参数量 (Flatten_Head / PatchwiseHead)
+- RevIN: 可逆实例归一化参数量
+
+**示例参数量 (seq_len=336, pred_len=96, d_model=128, Chronos)**:
+| 模型 | Backbone | Projector | ChannelFusionMLP | TransformerDecoder | Head | Total (excl. Chronos) |
+|------|----------|-----------|------------------|-------------------|------|----------------------|
+| PatchTST | 22,180 | - | - | - | 32,352 | 54,532 |
+| PatchTST_REPA | 22,180 | 302,208 | - | - | 32,352 | 356,740 |
+| PatchTST_REPA_Fusion | 11,394 | - | 1,552,896 | 3,546,625 | 313,760 | 5,424,675 |
+
+注: PatchTST_REPA_Fusion 的 Head 使用 PatchwiseHead，参数量约为 313K，比原 Flatten_Head 的 24M 减少约 98.7%
 
 ## Directory Structure
 
@@ -518,7 +609,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 
 ## Debug & Diagnostics
 
-- `diagnose_results/debug_shapes.py` - Debug script to check tensor shapes during training
+- `diagnose_results/debug_shapes.py` - Debug script to check tensor shapes with Chronos2.sh configuration (stride=16, padding_patch=None, head_type=quantile)
 - `diagnose_results/compare_models.py` - Compare our implementation with original PatchTST to verify numerical consistency (forward pass and gradients)
 - `diagnose_results/compare_loss.py` - Compare loss curves between PatchTST and PatchTST_REPA experiments
 
@@ -540,3 +631,10 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **Training log format**: Fixed to use 3 decimal places for cost time, 4 decimal places scientific notation for lr, and `***` prefix at end of line for best model updates
 - **is_best_update error**: Fixed local variable referenced before assignment error by computing vali_loss before using is_best_update
 - **Quantile prediction head**: Added `head_type` and `num_quantiles` hyperparameters to support quantile prediction (similar to Chronos2) with Quantile Loss (Pinball Loss). Uses flatten-all-then-project approach: `d_model * input_patch_num` → `d_ff (=head_nf)` → `output_patch_num * num_quantiles * 16`.
+- **--padding_patch parameter**: Fixed parameter name (was incorrectly using `--ending` in scripts)
+- **Duplicate head_type argument**: Fixed duplicate `head_type=head_type` in PatchTST.__init__ calls
+- **QuantileLoss not used**: Fixed training loop to actually use QuantileLoss when head_type=quantile (previously used MSE). Validation and test still use MSE with median quantile output.
+- **Model selection via model_name**: Simplified model selection by using `--model` parameter instead of separate `--use_projector` and `--use_channel_fusion` flags. Three options: `PatchTST`, `PatchTST_REPA`, `PatchTST_REPA_Fusion`.
+- **Unified head**: Renamed `head_fused` to `head` for channel fusion branch to simplify code.
+- **PatchwiseHead for Channel Fusion**: 为 PatchTST_REPA_Fusion 实现 PatchwiseHead，替换 Flatten_Head。使用共享的 ResidualBlock (d_model → d_model//2 → output_patch_size)，大幅减少参数量 (从 24M 降至约 300K)。
+- **Detailed parameter statistics**: 更新参数统计代码，显示每个模块的详细参数量分解 (Backbone, Projector, ChannelFusionMLP, TransformerDecoder, Head, RevIN)。

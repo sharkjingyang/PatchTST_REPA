@@ -63,46 +63,82 @@ class Exp_Main(Exp_Basic):
         print("=" * 60)
 
         model = self.model
-        use_projector = getattr(self.args, 'use_projector', 0)
+        model_name = self.args.model
+
+        # Get model components
+        model_backbone = model.model if hasattr(model, 'model') else None
+
+        # Get head info
+        head_type = type(model_backbone.head).__name__ if model_backbone and hasattr(model_backbone, 'head') else 'None'
+        use_channel_fusion = model_backbone.use_channel_fusion if model_backbone and hasattr(model_backbone, 'use_channel_fusion') else False
+
+        # Total parameters
         all_total = sum(p.numel() for p in model.parameters())
         all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        if use_projector:
-            # Detect which feature extractor is created
-            feature_extractor = None
-            fe_total = 0
+        print(f"\nModel Configuration:")
+        print(f"  Model:           {model_name}")
+        print(f"  Head type:       {head_type}")
+        print(f"  Channel fusion:  {use_channel_fusion}")
 
-            if hasattr(model, 'tivit') and model.tivit is not None:
-                feature_extractor = 'tivit'
-                fe_total = sum(p.numel() for p in model.tivit.parameters())
-            elif hasattr(model, 'mantis') and model.mantis is not None:
-                feature_extractor = 'mantis'
-                fe_total = sum(p.numel() for p in model.mantis.network.parameters())
-            elif hasattr(model, 'chronos_model') and model.chronos_model is not None:
-                feature_extractor = 'chronos'
-                fe_total = sum(p.numel() for p in model.chronos_model.parameters())
+        # Detect feature extractor
+        feature_extractor = None
+        fe_total = 0
 
-            total_excl = all_total - fe_total
+        if hasattr(model, 'tivit') and model.tivit is not None:
+            feature_extractor = 'TiViT'
+            fe_total = sum(p.numel() for p in model.tivit.parameters())
+        elif hasattr(model, 'mantis') and model.mantis is not None:
+            feature_extractor = 'Mantis'
+            fe_total = sum(p.numel() for p in model.mantis.network.parameters())
+        elif hasattr(model, 'chronos_model') and model.chronos_model is not None:
+            feature_extractor = 'Chronos'
+            fe_total = sum(p.numel() for p in model.chronos_model.parameters())
 
-            print(f"Total parameters (all):     {all_total:,}")
-            print(f"Total parameters (excl. {feature_extractor}): {total_excl:,}")
-            print(f"Trainable parameters:       {all_trainable:,}")
+        print(f"\nTotal parameters (all):              {all_total:,}")
+        if feature_extractor:
+            print(f"Total parameters (excl. {feature_extractor}): {all_total - fe_total:,}")
+        print(f"Trainable parameters:                {all_trainable:,}")
 
-            # Projector params
-            if hasattr(model, 'model') and hasattr(model.model, 'projector'):
-                proj_total = sum(p.numel() for p in model.model.projector.parameters())
-                print(f"\nProjector parameters: {proj_total:,}")
+        # Detailed module breakdown
+        print(f"\nModule Parameters:")
+
+        # Backbone (encoder)
+        if model_backbone and hasattr(model_backbone, 'backbone'):
+            bb_total = sum(p.numel() for p in model_backbone.backbone.parameters())
+            print(f"  Backbone (encoder):    {bb_total:,}")
+
+        # Projector
+        if model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
+            if hasattr(model_backbone, 'projector') and model_backbone.projector is not None:
+                proj_total = sum(p.numel() for p in model_backbone.projector.parameters())
+                print(f"  Projector:             {proj_total:,}")
             elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
                 proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
-                print(f"\nProjector parameters (2): {proj_total:,}")
+                print(f"  Projector (2):        {proj_total:,}")
 
-            # Feature extractor params
-            if feature_extractor:
-                print(f"\n{feature_extractor.capitalize()} parameters (frozen, excluded): {fe_total:,}")
-        else:
-            print(f"Total parameters:            {all_total:,}")
-            print(f"Trainable parameters:       {all_trainable:,}")
-            print("\nNote: Original PatchTST (use_projector=0)")
+        # Channel Fusion components
+        if use_channel_fusion:
+            if hasattr(model_backbone, 'channel_fusion_mlp') and model_backbone.channel_fusion_mlp is not None:
+                cf_mlp_total = sum(p.numel() for p in model_backbone.channel_fusion_mlp.parameters())
+                print(f"  ChannelFusionMLP:      {cf_mlp_total:,}")
+            if hasattr(model_backbone, 'transformer_decoder') and model_backbone.transformer_decoder is not None:
+                td_total = sum(p.numel() for p in model_backbone.transformer_decoder.parameters())
+                print(f"  TransformerDecoder:   {td_total:,}")
+
+        # Head
+        if model_backbone and hasattr(model_backbone, 'head'):
+            head_total = sum(p.numel() for p in model_backbone.head.parameters())
+            print(f"  Head ({head_type}):         {head_total:,}")
+
+        # RevIN
+        if model_backbone and hasattr(model_backbone, 'revin_layer'):
+            revin_total = sum(p.numel() for p in model_backbone.revin_layer.parameters())
+            print(f"  RevIN:                {revin_total:,}")
+
+        # Feature extractor
+        if feature_extractor:
+            print(f"\n  {feature_extractor} (frozen):    {fe_total:,}")
 
         print("=" * 60)
 
@@ -116,16 +152,16 @@ class Exp_Main(Exp_Basic):
             'Linear': Linear,
             'PatchTST': PatchTST,
             'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
+            'PatchTST_REPA_Fusion': PatchTST,  # PatchTST with channel fusion branch
         }
 
-        # Auto-set use_projector based on model_name:
-        # - PatchTST: original PatchTST (use_projector=0)
-        # - PatchTST_REPA: PatchTST with feature alignment (use_projector=1)
+        # Print model info based on model_name
         if self.args.model == 'PatchTST_REPA':
-            self.args.use_projector = 1
-            print(f"\n>>> Using PatchTST_REPA: auto-set use_projector=1 (with projector + contrastive loss)")
+            print(f"\n>>> Using PatchTST_REPA: projector + contrastive loss")
+        elif self.args.model == 'PatchTST_REPA_Fusion':
+            print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch")
         else:
-            self.args.use_projector = 0
+            print(f"\n>>> Using {self.args.model}: original PatchTST")
 
         model = model_dict[self.args.model].Model(self.args).float()
 
@@ -221,7 +257,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                            # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
                                 outputs = outputs[0]
@@ -232,7 +268,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                        # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
                             outputs = outputs[0]
@@ -286,7 +322,7 @@ class Exp_Main(Exp_Basic):
         no_improve_count = 0  # Early stopping counter
 
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion()
+        criterion = self._select_criterion().to(self.device)  # Move criterion to same device as model
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -322,11 +358,9 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            # Check if use_projector is enabled
-                            use_projector = getattr(self.args, 'use_projector', 0)
                             # Slice target to pred_len for feature extraction
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
-                            if use_projector:
+                            if self.args.model in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
                                 outputs, _, _ = self.model(batch_x, batch_y_pred, return_projector=True)  # Get final output + features
                             else:
                                 outputs = self.model(batch_x, batch_y_pred)  # Original PatchTST: returns only output
@@ -347,13 +381,12 @@ class Exp_Main(Exp_Basic):
                         loss_contrastive_per_step.append(0.0)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        # Check if use_projector is enabled
-                        use_projector = getattr(self.args, 'use_projector', 0)
                         # Slice target to pred_len for feature extraction
                         batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
 
-                        # When using Chronos, interpolate to seq_len length to keep patch_num consistent
-                        if use_projector and getattr(self.args, 'feature_extractor', None) == 'chronos':
+                        # When using Chronos with PatchTST_REPA (not Fusion), interpolate to seq_len length to keep patch_num consistent
+                        # PatchTST_REPA_Fusion uses Channel Fusion MLP which handles patch_num conversion automatically
+                        if self.args.model == 'PatchTST_REPA' and getattr(self.args, 'feature_extractor', None) == 'chronos':
                             batch_y_for_model = F.interpolate(
                                 batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
                                 size=self.args.seq_len,
@@ -361,7 +394,7 @@ class Exp_Main(Exp_Basic):
                                 align_corners=False
                             ).permute(0, 2, 1)  # (bs, seq_len, nvars)
 
-                        if use_projector:
+                        if self.args.model in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
                             outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
                         else:
                             outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
@@ -392,14 +425,13 @@ class Exp_Main(Exp_Basic):
                     else:
                         mse_loss = criterion(outputs, batch_y_pred)
 
-                    # Contrastive loss for feature alignment (only when use_projector=1)
-                    use_projector = getattr(self.args, 'use_projector', 0)
-                    if use_projector:
+                    # Contrastive loss for feature alignment (only when using REPA model)
+                    if self.args.model in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
                         lambda_loss = self.args.lambda_contrastive
                         contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
                         loss = mse_loss + lambda_loss * contrastive_loss
                     else:
-                        contrastive_loss = torch.tensor(0.0)
+                        contrastive_loss = torch.tensor(0.0, device=self.device)
                         loss = mse_loss
 
                     train_loss.append(loss.item())
@@ -548,7 +580,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                            # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
                                 outputs = outputs[0]
@@ -559,7 +591,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                        # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
                             outputs = outputs[0]
@@ -652,7 +684,7 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
-                            # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                            # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
                                 outputs = outputs[0]
@@ -663,7 +695,7 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model:
-                        # use_projector=0: returns only output; use_projector=1: returns (output, zs)
+                        # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
                             outputs = outputs[0]

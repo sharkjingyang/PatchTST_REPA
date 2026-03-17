@@ -1,4 +1,4 @@
-__all__ = ['PatchTST_backbone']
+__all__ = ['PatchTST_backbone', 'ChannelFusionMLP', 'TransformerDecoder', 'PatchwiseHead']
 
 # Cell
 from typing import Callable, Optional
@@ -21,6 +21,67 @@ def build_mlp(input_dim, hidden_dim, output_dim):
     )
 
 
+class ChannelFusionMLP(nn.Module):
+    """将 (B, nvars, input_patch_num, d_model) 投影到 (B, nvars, output_patch_num, d_extractor)
+    直接投影: d_model * input_patch_num → d_extractor * output_patch_num（无 hidden 层）"""
+    def __init__(self, input_patch_num, output_patch_num, d_model, d_extractor, dropout=0.0):
+        super().__init__()
+        self.input_patch_num = input_patch_num
+        self.output_patch_num = output_patch_num
+
+        input_dim = d_model * input_patch_num
+        output_dim = d_extractor * output_patch_num
+
+        # 直接投影，无 hidden 层
+        self.projection = nn.Sequential(
+            nn.Linear(input_dim, output_dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        # x: (B, nvars, input_patch_num, d_model)
+        B, nvars, input_patch_num, d_model = x.shape
+
+        # Flatten: (B, nvars, input_patch_num, d_model) → (B, nvars, d_model * input_patch_num)
+        x = x.reshape(B, nvars, -1)
+
+        # 直接投影: (B, nvars, d_model * input_patch_num) → (B, nvars, d_extractor * output_patch_num)
+        x = self.projection(x)
+
+        # Reshape: (B, nvars, d_extractor * output_patch_num) → (B, nvars, output_patch_num, d_extractor)
+        x = x.reshape(B, nvars, self.output_patch_num, -1)
+
+        # Permute: (B, nvars, output_patch_num, d_extractor) → (B, nvars, d_extractor, output_patch_num)
+        # 适配后续 attention block 格式
+        x = x.permute(0, 1, 3, 2)
+
+        return x
+
+
+class TransformerDecoder(nn.Module):
+    """Transformer Decoder，用于在 channel_fusion 之后进一步处理
+    使用与 PatchTST_backbone 相同的 n_heads 参数"""
+    def __init__(self, output_patch_num, d_extractor, n_heads, d_layers=1, d_ff=None, dropout=0.0):
+        super().__init__()
+        if d_ff is None:
+            d_ff = d_extractor  # 使用 d_extractor 而非 d_extractor * 4
+
+        # 使用 d_layers 层 TSTEncoderLayer
+        self.layers = nn.ModuleList([
+            TSTEncoderLayer(
+                q_len=output_patch_num, d_model=d_extractor,
+                n_heads=n_heads, d_ff=d_ff, dropout=dropout, activation='gelu'
+            )
+            for _ in range(d_layers)
+        ])
+
+    def forward(self, x):
+        # x: (B*nvars, output_patch_num, d_extractor)
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+
 # Cell
 class PatchTST_backbone(nn.Module):
     def __init__(self, c_in:int, context_window:int, target_window:int, patch_len:int, stride:int, max_seq_len:Optional[int]=1024,
@@ -31,6 +92,8 @@ class PatchTST_backbone(nn.Module):
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
                  encoder_depth: int = 2, projector_dim: int = 768, use_projector: int = 0,
                  num_quantiles: int = 20,
+                 output_patch_size: int = 16, use_channel_fusion: bool = False, channel_fusion_n_heads: int = 4,
+                 d_extractor: int = 768, d_layers: int = 1,
                  verbose:bool=False, **kwargs):
 
         super().__init__()
@@ -48,39 +111,95 @@ class PatchTST_backbone(nn.Module):
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
 
+        # Channel Fusion parameters
+        self.use_channel_fusion = use_channel_fusion
+        self.output_patch_size = output_patch_size
+        self.channel_fusion_n_heads = channel_fusion_n_heads
+        self.d_extractor = d_extractor
+
+        # Calculate output_patch_num
+        assert target_window % output_patch_size == 0, f"pred_len must be divisible by output_patch_size, got pred_len={target_window}, output_patch_size={output_patch_size}"
+        output_patch_num = target_window // output_patch_size
+
         # Backbone
         self.encoder_depth = encoder_depth
+        # When use_channel_fusion=True, only need encoder_depth layers (extract zs from that layer)
+        # No need for the remaining layers since we use Channel Fusion MLP + flatten head instead
+        n_layers_backbone = encoder_depth if use_channel_fusion else n_layers
         self.backbone = TSTiEncoder(c_in, patch_num=patch_num, patch_len=patch_len, max_seq_len=max_seq_len,
-                                n_layers=n_layers, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff,
+                                n_layers=n_layers_backbone, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff,
                                 attn_dropout=attn_dropout, dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                 attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                 pe=pe, learn_pe=learn_pe, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
 
         # Head
-        self.head_nf = d_model * patch_num
-        self.n_vars = c_in
-        self.pretrain_head = pretrain_head
-        self.head_type = head_type
-        self.individual = individual
-        self.target_window = target_window
-        self.num_quantiles = num_quantiles
+        self.head = None
+        self.use_channel_fusion = use_channel_fusion
+        self.head_type = head_type  # Always set head_type for denorm
+        if not self.use_channel_fusion:
+            self.head_nf = d_model * patch_num
+            self.n_vars = c_in
+            self.pretrain_head = pretrain_head
+            self.individual = individual
+            self.target_window = target_window
+            self.num_quantiles = num_quantiles
+            self.patch_num = patch_num
 
-        if self.pretrain_head:
-            self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout) # custom head passed as a partial func with all its kwargs
-        elif head_type == 'quantile':
-            self.head = Quantile_Head(self.n_vars, d_model, patch_num, target_window,
-                                       num_quantiles=num_quantiles, dropout=head_dropout)
-        elif head_type == 'flatten':
-            self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
+            if self.pretrain_head:
+                self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout) # custom head passed as a partial func with all its kwargs
+            elif head_type == 'quantile':
+                self.head = Quantile_Head(self.n_vars, d_model, patch_num, target_window,
+                                           num_quantiles=num_quantiles, dropout=head_dropout)
+            elif head_type == 'flatten':
+                self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
-        # MLP Projector for aligning zs with TiViT features (only when use_projector=1)
+        # MLP Projector for aligning zs with TiViT features (only when use_projector=1 and not use_channel_fusion)
         self.use_projector = use_projector
         self.projector_dim = projector_dim
         self.projector = None
-        if self.use_projector:
+        if self.use_projector and not self.use_channel_fusion:
             # zs shape: [bs, nvars, d_model, patch_num]
             # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
             self.projector = build_mlp(d_model, projector_dim // 2, projector_dim)
+
+        # Channel Fusion components (only when use_channel_fusion=True)
+        self.channel_fusion_mlp = None
+        self.transformer_decoder = None
+
+        if self.use_channel_fusion:
+            # Set required variables for head creation
+            self.individual = individual
+            self.n_vars = c_in
+            self.target_window = target_window
+
+            # ChannelFusionMLP: (B, nvars, input_patch_num, d_model) -> (B, nvars, output_patch_num, d_extractor)
+            self.channel_fusion_mlp = ChannelFusionMLP(
+                input_patch_num=patch_num,
+                output_patch_num=output_patch_num,
+                d_model=d_model,
+                d_extractor=d_extractor,
+                dropout=dropout
+            )
+
+            # Transformer Decoder: (B*nvars, output_patch_num, d_extractor)
+            self.transformer_decoder = TransformerDecoder(
+                output_patch_num=output_patch_num,
+                d_extractor=d_extractor,
+                n_heads=channel_fusion_n_heads,
+                d_layers=d_layers,
+                dropout=dropout
+            )
+
+            # Patchwise Head for fused branch (instead of Flatten_Head)
+            # Uses shared ResidualBlock per patch, similar to Chronos2
+            if head_type == 'flatten':
+                self.head = PatchwiseHead(
+                    n_vars=self.n_vars,
+                    d_model=d_extractor,
+                    output_patch_num=output_patch_num,
+                    output_patch_size=output_patch_size,
+                    dropout=head_dropout
+                )
         
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
@@ -96,31 +215,63 @@ class PatchTST_backbone(nn.Module):
         z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride)                   # z: [bs x nvars x patch_num x patch_len]
         z = z.permute(0,1,3,2)                                                              # z: [bs x nvars x patch_len x patch_num]
 
-        # model - only request intermediate when use_projector=1
-        if self.use_projector:
+        # model - only request intermediate when use_projector=1 or use_channel_fusion=1
+        need_intermediate = self.use_projector or self.use_channel_fusion
+        if need_intermediate:
             z, zs = self.backbone(z, return_intermediate=True)                               # z: [bs x nvars x d_model x patch_num], zs: intermediate output
+        else:
+            # Original PatchTST: no intermediate output needed
+            z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
+            zs = None
 
+        # Build prediction output based on configuration
+        output = None
+        zs_projected = None
+
+        if self.use_channel_fusion and zs is not None:
+            # Channel Fusion branch: encoder intermediate → channel_fusion_mlp → transformer_decoder → head
+            # zs: (bs, nvars, d_model, patch_num) - from encoder_depth layer
+
+            # Apply ChannelFusionMLP to get zs_fused
+            zs_fused = self.channel_fusion_mlp(zs)  # (bs, nvars, d_extractor, output_patch_num)
+
+            # For contrastive loss: use zs_fused (already aligned to d_extractor)
+            # Permute to (bs, nvars, output_patch_num, d_extractor) for consistency
+            zs_projected = zs_fused.permute(0, 1, 3, 2)  # (bs, nvars, output_patch_num, d_extractor)
+
+            # Apply Transformer Decoder
+            # Input: (bs, nvars, d_extractor, output_patch_num) -> (bs*nvars, output_patch_num, d_extractor)
+            bs, nvars, d_extractor, output_patch_num = zs_fused.shape
+            zs_fused_flat = zs_fused.permute(0, 1, 3, 2).reshape(-1, output_patch_num, d_extractor)
+            zs_fused_processed = self.transformer_decoder(zs_fused_flat)  # (bs*nvars, output_patch_num, d_extractor)
+
+            # Reshape back: (bs*nvars, output_patch_num, d_extractor) -> (bs, nvars, d_extractor, output_patch_num)
+            zs_fused_processed = zs_fused_processed.reshape(bs, nvars, output_patch_num, d_extractor)
+            zs_fused_processed = zs_fused_processed.permute(0, 1, 3, 2)  # (bs, nvars, d_extractor, output_patch_num)
+
+            # Apply Flatten Head to fused features
+            output = self.head(zs_fused_processed)  # (bs, nvars, target_window)
+
+        elif self.use_projector and not self.use_channel_fusion:
+            # Original MLP Projector branch: encoder intermediate → projector → contrastive loss
             # Apply MLP projector to zs (no mean pooling - done in contrastive loss)
             bs, nvars, d_model, patch_num = zs.shape
             zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
             zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
             zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
+
+            # Encoder final output → Flatten Head
+            output = self.head(z)  # z: [bs x nvars x target_window]
+
         else:
-            # Original PatchTST: no intermediate output needed
-            z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
-            zs_projected = None
+            # Original PatchTST: encoder final output → Flatten Head
+            output = self.head(z)  # z: [bs x nvars x target_window] or [bs x nvars x num_quantiles x target_window]
 
-        output = self.head(z)                                                               # z: [bs x nvars x target_window] or [bs x nvars x num_quantiles x target_window]
-
-        # denorm - 需要针对分位数输出特殊处理
-        if self.revin:
+        # Apply denorm
+        if self.revin and output is not None:
             if self.head_type == 'quantile':
                 # output: (bs, nvars, num_quantiles, pred_len)
-                # RevIN expects: (bs, seq_len, nvars)
-                # Need to apply denorm to each quantile separately or repeat the stats
                 bs, nvars, num_quantiles, pred_len = output.shape
-                # For each quantile, we apply the same denorm (since we don't have separate stats per quantile)
-                # Approach: apply denorm per quantile by treating each quantile as a separate channel
                 output_per_quantile = []
                 for q in range(num_quantiles):
                     out_q = output[:, :, q, :]  # (bs, nvars, pred_len)
@@ -130,12 +281,15 @@ class PatchTST_backbone(nn.Module):
                     output_per_quantile.append(out_q)
                 output = torch.stack(output_per_quantile, dim=2)  # (bs, nvars, num_quantiles, pred_len)
             else:
-                output = output.permute(0,2,1)
+                output = output.permute(0, 2, 1)
                 output = self.revin_layer(output, 'denorm')
-                output = output.permute(0,2,1)
+                output = output.permute(0, 2, 1)
 
-        # Original PatchTST: return only output when use_projector=0
-        if self.use_projector:
+        # Return based on configuration
+        if self.use_channel_fusion:
+            # Return channel fusion output and zs_projected for contrastive loss
+            return output, zs_projected
+        elif self.use_projector:
             return output, zs_projected
         else:
             return output
@@ -244,10 +398,62 @@ class Quantile_Head(nn.Module):
         # out shape: (bs, nvars, num_quantiles, pred_len)
 
         return out
-        
-        
-    
-    
+
+
+class PatchwiseHead(nn.Module):
+    """Patch-wise 预测头 - 每个 patch 独立预测，类似 Chronos2
+
+    输入: (bs, nvars, d_model, output_patch_num) 来自 Channel Fusion
+    每个 patch 经过 ResidualBlock: d_model -> d_ff -> output_patch_size
+    残差连接
+    Rearrange: (bs, nvars, output_patch_num, output_patch_size) -> (bs, nvars, pred_len)
+
+    输出维度: (bs, nvars, pred_len)
+
+    参数量: 比 Flatten_Head 更小 (d_model * output_patch_num -> d_model // 2 -> output_patch_size)
+    """
+    def __init__(self, n_vars, d_model, output_patch_num, output_patch_size=16, dropout=0.0):
+        super().__init__()
+        self.n_vars = n_vars
+        self.d_model = d_model
+        self.output_patch_num = output_patch_num
+        self.output_patch_size = output_patch_size
+        self.pred_len = output_patch_num * output_patch_size
+
+        # ResidualBlock: d_model -> d_ff -> output_patch_size
+        # 使用 d_model // 2 作为 hidden dim (平衡参数量和表示能力)
+        # 对于 d_model=768: d_ff=384, 总参数量 ~450K (与 Flatten_Head 的 442K 接近)
+        # 对于 d_model=128: d_ff=64, 总参数量 ~12K (远小于 Flatten_Head 的 258K)
+        d_ff = max(d_model // 2, 64)  # 最小 64 避免过小
+
+        self.hidden = nn.Linear(d_model, d_ff)
+        self.act = nn.GELU()
+        self.output = nn.Linear(d_ff, output_patch_size)
+        self.residual = nn.Linear(d_model, output_patch_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):  # x: (bs, nvars, d_model, output_patch_num)
+        # x: (bs, nvars, d_model, output_patch_num)
+        # 每个 patch 独立经过 ResidualBlock
+        bs, nvars, d_model, output_patch_num = x.shape
+
+        # Reshape: (bs, nvars, d_model, output_patch_num) -> (bs*nvars*output_patch_num, d_model)
+        x = x.permute(0, 1, 3, 2)  # (bs, nvars, output_patch_num, d_model)
+        x = x.reshape(-1, d_model)  # (bs*nvars*output_patch_num, d_model)
+
+        # ResidualBlock
+        hid = self.act(self.hidden(x))  # (bs*nvars*output_patch_num, d_ff)
+        out = self.dropout(self.output(hid))  # (bs*nvars*output_patch_num, output_patch_size)
+        res = self.residual(x)  # (bs*nvars*output_patch_num, output_patch_size)
+        out = out + res  # (bs*nvars*output_patch_num, output_patch_size)
+
+        # Reshape back: (bs*nvars*output_patch_num, output_patch_size) -> (bs, nvars, pred_len)
+        out = out.reshape(bs, nvars, self.pred_len)
+
+        return out
+
+
+
 class TSTiEncoder(nn.Module):  #i means channel-independent
     def __init__(self, c_in, patch_num, patch_len, max_seq_len=1024,
                  n_layers=3, d_model=128, n_heads=16, d_k=None, d_v=None,
