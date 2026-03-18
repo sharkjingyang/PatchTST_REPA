@@ -1,7 +1,7 @@
 """
 Compare two PatchTST implementations:
 1. Original PatchTST (PatchTST-main/PatchTST_supervised)
-2. Our modified version with use_projector=0
+2. Our modified version with contrastive=0
 
 This script verifies that both implementations produce identical results.
 """
@@ -91,10 +91,10 @@ print(f"Original model parameters: {orig_params:,}")
 
 
 # ============================================================
-# Load Our Modified PatchTST (use_projector=0)
+# Load Our Modified PatchTST (contrastive=0)
 # ============================================================
 print("\n" + "=" * 60)
-print("Loading Modified PatchTST (use_projector=0)")
+print("Loading Modified PatchTST (contrastive=0)")
 print("=" * 60)
 
 # Remove original path to avoid import conflicts
@@ -129,7 +129,7 @@ class ArgsOurs:
         self.kernel_size = 25
         self.individual = 0
         self.encoder_depth = 2
-        self.use_projector = 0
+        self.contrastive = 0
         self.projector_dim = 768
 
 args_ours = ArgsOurs()

@@ -68,24 +68,20 @@ class Model(nn.Module):
         # Model type detection
         self.model_name = configs.model  # PatchTST, PatchTST_REPA, PatchTST_REPA_Fusion
 
-        # Allow user to override use_projector via args
-        user_use_projector = getattr(configs, 'use_projector', None)
+        # Get contrastive setting from args
+        user_contrastive = getattr(configs, 'contrastive', None)
 
-        # Set use_projector and use_patch_fusion based on model_name
+        # Set contrastive and use_patch_fusion based on model_name
         # PatchTST_REPA_Fusion always uses Channel Fusion (cannot be disabled)
         if self.model_name == 'PatchTST_REPA':
-            self.use_projector = 1 if user_use_projector is None else user_use_projector
+            self.contrastive = 1 if user_contrastive is None else user_contrastive
             self.use_patch_fusion = False
         elif self.model_name == 'PatchTST_REPA_Fusion':
-            self.use_projector = 1 if user_use_projector is None else user_use_projector
+            self.contrastive = 1 if user_contrastive is None else user_contrastive
             self.use_patch_fusion = True  # Always enabled
         else:  # PatchTST
-            self.use_projector = 0
+            self.contrastive = 0
             self.use_patch_fusion = False
-
-        # Apply user overrides for PatchTST_REPA_Fusion
-        if user_use_projector is not None and self.model_name == 'PatchTST_REPA_Fusion':
-            self.use_projector = user_use_projector
 
         # Feature extractor parameters
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
@@ -182,7 +178,7 @@ class Model(nn.Module):
             else:
                 raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit', 'mantis' or 'chronos'.")
         else:
-            # use_projector=0: original PatchTST, no TiViT/Mantis
+            # contrastive=0: original PatchTST, no TiViT/Mantis
             pass
             pass
 
@@ -204,7 +200,7 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
                                       output_patch_size=output_patch_size, use_patch_fusion=self.use_patch_fusion,
                                       patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       patch_fusion_type=patch_fusion_type,
@@ -217,7 +213,7 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
                                       output_patch_size=output_patch_size,
                                       patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       patch_fusion_type=patch_fusion_type,
@@ -243,8 +239,8 @@ class Model(nn.Module):
                                       subtract_last=subtract_last, num_quantiles=num_quantiles,
                                       verbose=verbose, **kwargs)
         else:
-            # Use projector/channel_fusion only if use_projector=1 or use_patch_fusion=1
-            if self.use_projector or self.use_patch_fusion:
+            # Use projector/channel_fusion only if contrastive=1 or use_patch_fusion=1
+            if self.contrastive or self.use_patch_fusion:
                 self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                       n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -253,7 +249,7 @@ class Model(nn.Module):
                                       pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                       pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
                                       subtract_last=subtract_last, encoder_depth=encoder_depth, projector_dim=projector_dim,
-                                      use_projector=self.use_projector, num_quantiles=num_quantiles,
+                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
                                       output_patch_size=output_patch_size, use_patch_fusion=self.use_patch_fusion,
                                       patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       patch_fusion_type=patch_fusion_type,
@@ -303,16 +299,16 @@ class Model(nn.Module):
                     # output: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
                     output = output.permute(0, 2, 1)
 
-                # If use_projector=0, don't return zs for contrastive loss
-                if not self.use_projector:
+                # If contrastive=0, don't return zs for contrastive loss
+                if not self.contrastive:
                     return output
 
                 # Otherwise return (output, zs) for contrastive learning
                 return output, zs
 
             # Original PatchTST (non-channel-fusion)
-            # Original PatchTST (use_projector=0): return only output
-            if not self.use_projector:
+            # Original PatchTST (contrastive=0): return only output
+            if not self.contrastive:
                 output = self.model(x)  # returns only output
                 if head_type == 'quantile':
                     # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
@@ -322,7 +318,7 @@ class Model(nn.Module):
                     output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
                     return output
 
-            # With projector (use_projector=1): return output and zs
+            # With projector (contrastive=1): return output and zs
             output, zs = self.model(x)  # returns (output, zs_projected)
             # Permute output based on head_type
             if head_type == 'quantile':

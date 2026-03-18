@@ -67,7 +67,7 @@ sh ./scripts/Chronos2.sh     # PatchTST_REPA + Chronos (patch_wise)
 
 ### Head Types
 - `flatten`: Flatten_Head (standard)
-- `patchwise`: PatchwiseHead (~11K params with d_channel=128)
+- `patch_wise`: PatchwiseHead (~11K params with d_channel=128)
 - `quantile`: Quantile_Head for probabilistic forecasting
 
 ### Output Shapes
@@ -80,9 +80,9 @@ sh ./scripts/Chronos2.sh     # PatchTST_REPA + Chronos (patch_wise)
 |-----------|-------------|---------|
 | `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion | - |
 | `patch_fusion_type` | fusion_MLP (joint) or split_MLP (separable) | fusion_MLP |
-| `use_projector` | Enable contrastive learning (1/0) | auto |
+| `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
-| `head_type` | flatten / patchwise / quantile | flatten |
+| `head_type` | flatten / patch_wise / quantile | flatten |
 | `lambda_contrastive` | Contrastive loss weight | 0.5 |
 
 ## Parameter Comparison (d_model=16, seq_len=336, pred_len=96)

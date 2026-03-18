@@ -67,7 +67,7 @@ if __name__ == '__main__':
     parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'], help='Feature extractor for contrastive loss: tivit, mantis or chronos')
     parser.add_argument('--mantis_pretrained', type=str, default='./Mantis', help='Mantis pretrained model path')
     parser.add_argument('--chronos_pretrained', type=str, default='./Chronos2', help='Chronos pretrained model path')
-    parser.add_argument('--head_type', type=str, default='flatten', choices=['flatten', 'patchwise', 'quantile'],
+    parser.add_argument('--head_type', type=str, default='flatten', choices=['flatten', 'patch_wise', 'quantile'],
                         help='Prediction head type: flatten for point prediction, quantile for quantile prediction')
     parser.add_argument('--num_quantiles', type=int, default=20,
                         help='Number of quantiles for quantile head')
@@ -78,8 +78,8 @@ if __name__ == '__main__':
     parser.add_argument('--d_layers', type=int, default=1, help='Number of Transformer Decoder layers for patch fusion (used in PatchTST_REPA_Fusion)')
     parser.add_argument('--patch_fusion_type', type=str, default='fusion_MLP', choices=['fusion_MLP', 'split_MLP'],
                         help='Patch fusion MLP type: fusion_MLP (joint projection) or split_MLP (separable projection)')
-    parser.add_argument('--use_projector', type=int, default=None,
-                        help='Enable projector for contrastive learning (None=auto based on model, 0=disable, 1=enable)')
+    parser.add_argument('--contrastive', type=int, default=None,
+                        help='Enable contrastive learning loss (None=auto based on model, 0=disable, 1=enable)')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')

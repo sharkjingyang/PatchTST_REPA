@@ -41,7 +41,7 @@ parser.add_argument('--chronos_pretrained', type=str, default='./Chronos2')
 parser.add_argument('--head_type', type=str, default='quantile', choices=['flatten', 'quantile'])  # Chronos2.sh: head_type=quantile
 parser.add_argument('--num_quantiles', type=int, default=20)
 parser.add_argument('--contrastive_type', type=str, default='patch_wise', choices=['mean_pool', 'patch_wise'])
-parser.add_argument('--use_projector', type=int, default=1)  # Enable projector for PatchTST_REPA
+parser.add_argument('--contrastive', type=int, default=1)  # Enable contrastive loss for PatchTST_REPA
 parser.add_argument('--lambda_contrastive', type=float, default=0.5)
 
 args = parser.parse_args()

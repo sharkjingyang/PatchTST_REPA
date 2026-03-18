@@ -93,7 +93,7 @@ Using `split_MLP` reduces Patch Fusion parameters by **~99.5%**.
 | `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion | - |
 | `patch_fusion_type` | fusion_MLP or split_MLP | fusion_MLP |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
-| `head_type` | flatten / patchwise / quantile | flatten |
+| `head_type` | flatten / patch_wise / quantile | flatten |
 | `lambda_contrastive` | Contrastive loss weight | 0.5 |
 
 ## Directory Structure

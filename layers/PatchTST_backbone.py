@@ -12,14 +12,6 @@ import numpy as np
 from layers.PatchTST_layers import *
 from layers.RevIN import RevIN
 
-def build_mlp(input_dim, hidden_dim, output_dim):
-    """Build a simple MLP with one hidden layer"""
-    return nn.Sequential(
-        nn.Linear(input_dim, hidden_dim),
-        nn.GELU(),
-        nn.Linear(hidden_dim, output_dim)
-    )
-
 
 class Patch_Fusion_MLP(nn.Module):
     """将 (B, nvars, input_patch_num, d_model) 投影到 (B, nvars, output_patch_num, d_channel)
@@ -140,7 +132,7 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, projector_dim: int = 768, use_projector: int = 0,
+                 encoder_depth: int = 2, projector_dim: int = 768, contrastive: int = 0,
                  num_quantiles: int = 20,
                  output_patch_size: int = 16, use_patch_fusion: bool = False, patch_fusion_n_heads: int = 4,
                  d_extractor: int = 768, d_layers: int = 1, patch_fusion_type: str = 'fusion_MLP',
@@ -203,19 +195,25 @@ class PatchTST_backbone(nn.Module):
             elif head_type == 'flatten':
                 self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
-        # MLP Projector for aligning zs with TiViT features (only when use_projector=1 and not use_patch_fusion)
-        self.use_projector = use_projector
-        self.projector_dim = projector_dim
-        self.projector = None
-        if self.use_projector and not self.use_patch_fusion:
+        # MLP Projector for aligning zs with TiViT features (only when contrastive=1 and not use_patch_fusion)
+        self.contrastive = contrastive
+        self.alignment_mlp_dim = projector_dim
+        self.alignment_mlp = None
+        if self.contrastive and not self.use_patch_fusion:
             # zs shape: [bs, nvars, d_model, patch_num]
             # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
-            self.projector = build_mlp(d_model, projector_dim // 2, projector_dim)
+            # MLP Projector: d_model -> projector_dim (with GELU activation)
+            self.alignment_mlp = nn.Sequential(
+                nn.Linear(d_model, projector_dim // 2),
+                nn.GELU(),
+                nn.Linear(projector_dim // 2, projector_dim)
+            )
 
         # Patch Fusion components (only when use_patch_fusion=True)
         self.patch_fusion_mlp = None
         self.transformer_decoder = None
-        self.alignment_mlp = None
+        if not self.contrastive:
+            self.alignment_mlp = None
 
         # Patch Fusion 使用 d_channel=128 减少参数量，然后通过 alignment_mlp 投影到 d_extractor 用于对比学习
         d_channel = 128
@@ -258,8 +256,8 @@ class PatchTST_backbone(nn.Module):
             self.alignment_mlp = nn.Linear(d_channel, d_extractor)
 
             # Head for Patch Fusion branch (使用 d_channel=128)
-            # Options: 'flatten' (Flatten_Head), 'patchwise' (PatchwiseHead), 'quantile' (Quantile_Head)
-            if head_type == 'patchwise':
+            # Options: 'flatten' (Flatten_Head), 'patch_wise' (PatchwiseHead), 'quantile' (Quantile_Head)
+            if head_type == 'patch_wise':
                 # Patchwise Head: uses shared ResidualBlock per patch, similar to Chronos2
                 # Reduces parameters from ~24M to ~300K
                 self.head = PatchwiseHead(
@@ -292,8 +290,8 @@ class PatchTST_backbone(nn.Module):
         z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride)                   # z: [bs x nvars x patch_num x patch_len]
         z = z.permute(0,1,3,2)                                                              # z: [bs x nvars x patch_len x patch_num]
 
-        # model - only request intermediate when use_projector=1 or use_patch_fusion=1
-        need_intermediate = self.use_projector or self.use_patch_fusion
+        # model - only request intermediate when contrastive=1 or use_patch_fusion=1
+        need_intermediate = self.contrastive or self.use_patch_fusion
         if need_intermediate:
             z, zs = self.backbone(z, return_intermediate=True)                               # z: [bs x nvars x d_model x patch_num], zs: intermediate output
         else:
@@ -333,13 +331,13 @@ class PatchTST_backbone(nn.Module):
             # Apply Head to fused features (使用 d_channel)
             output = self.head(zs_fused_processed)  # (bs, nvars, target_window)
 
-        elif self.use_projector and not self.use_patch_fusion:
+        elif self.contrastive and not self.use_patch_fusion:
             # Original MLP Projector branch: encoder intermediate → projector → contrastive loss
             # Apply MLP projector to zs (no mean pooling - done in contrastive loss)
             bs, nvars, d_model, patch_num = zs.shape
             zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
-            zs_projected = self.projector(zs_flat)                                          # [bs*nvars*patch_num x projector_dim]
-            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.projector_dim)   # [bs x nvars x patch_num x projector_dim]
+            zs_projected = self.alignment_mlp(zs_flat)                                    # [bs*nvars*patch_num x projector_dim]
+            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.alignment_mlp_dim)   # [bs x nvars x patch_num x projector_dim]
 
             # Encoder final output → Flatten Head
             output = self.head(z)  # z: [bs x nvars x target_window]
@@ -370,7 +368,7 @@ class PatchTST_backbone(nn.Module):
         if self.use_patch_fusion:
             # Return channel fusion output and zs_projected for contrastive loss
             return output, zs_projected
-        elif self.use_projector:
+        elif self.contrastive:
             return output, zs_projected
         else:
             return output

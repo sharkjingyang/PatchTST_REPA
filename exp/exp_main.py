@@ -163,8 +163,8 @@ class Exp_Main(Exp_Basic):
 
         # Print model info based on model_name
         if self.args.model == 'PatchTST_REPA':
-            use_projector = getattr(self.args, 'use_projector', None) or 1
-            print(f"\n>>> Using PatchTST_REPA: projector={use_projector} + contrastive loss")
+            contrastive = getattr(self.args, 'contrastive', None) or 1
+            print(f"\n>>> Using PatchTST_REPA: contrastive={contrastive} + contrastive loss")
         elif self.args.model == 'PatchTST_REPA_Fusion':
             print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
         else:
@@ -367,7 +367,7 @@ class Exp_Main(Exp_Basic):
                         if 'Linear' in self.args.model or 'TST' in self.args.model:
                             # Slice target to pred_len for feature extraction
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
-                            if hasattr(self.model, 'use_projector') and self.model.use_projector:
+                            if hasattr(self.model, 'contrastive') and self.model.contrastive:
                                 outputs, _, _ = self.model(batch_x, batch_y_pred, return_projector=True)  # Get final output + features
                             else:
                                 outputs = self.model(batch_x, batch_y_pred)  # Original PatchTST: returns only output
@@ -401,7 +401,7 @@ class Exp_Main(Exp_Basic):
                                 align_corners=False
                             ).permute(0, 2, 1)  # (bs, seq_len, nvars)
 
-                        if hasattr(self.model, 'use_projector') and self.model.use_projector:
+                        if hasattr(self.model, 'contrastive') and self.model.contrastive:
                             outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
                         else:
                             outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
@@ -433,7 +433,7 @@ class Exp_Main(Exp_Basic):
                         mse_loss = criterion(outputs, batch_y_pred)
 
                     # Contrastive loss for feature alignment (only when using projector)
-                    if hasattr(self.model, 'use_projector') and self.model.use_projector:
+                    if hasattr(self.model, 'contrastive') and self.model.contrastive:
                         lambda_loss = self.args.lambda_contrastive
                         contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
                         loss = mse_loss + lambda_loss * contrastive_loss

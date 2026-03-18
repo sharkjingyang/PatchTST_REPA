@@ -2,9 +2,6 @@ if [ ! -d "./logs" ]; then
     mkdir ./logs
 fi
 
-if [ ! -d "./logs/LongForecasting" ]; then
-    mkdir ./logs/LongForecasting
-fi
 seq_len=336
 model_name=PatchTST_REPA_Fusion
 
@@ -18,7 +15,8 @@ pred_len=720
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
 contrastive_type='patch_wise'
-head_type='patchwise'
+head_type='patch_wise'
+patch_fusion_type='split_MLP'
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -44,6 +42,8 @@ python -u run_longExp.py \
   --patch_len 16\
   --stride 16\
   --padding_patch None\
+  --contrastive 1\
+  --patch_fusion_type $patch_fusion_type\
   --head_type $head_type\
   --des 'Exp' \
   --train_epochs 20\
@@ -52,4 +52,4 @@ python -u run_longExp.py \
   --contrastive_type $contrastive_type \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
-  >logs/LongForecasting/${data_name}_${feature_extractor}_${contrastive_type}_${seq_len}_${pred_len}.log
+  >logs/${data_name}_${seq_len}_${pred_len}_${feature_extractor}_${contrastive_type}_${patch_fusion_type}_${head_type}.log
