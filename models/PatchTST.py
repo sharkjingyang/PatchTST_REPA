@@ -68,16 +68,26 @@ class Model(nn.Module):
         # Model type detection
         self.model_name = configs.model  # PatchTST, PatchTST_REPA, PatchTST_REPA_Fusion
 
-        # Set use_projector and use_channel_fusion based on model_name
+        # Allow user to override use_projector and use_channel_fusion via args
+        user_use_projector = getattr(configs, 'use_projector', None)
+        user_use_channel_fusion = getattr(configs, 'use_channel_fusion', None)
+
+        # Set use_projector and use_channel_fusion based on model_name, but allow override
         if self.model_name == 'PatchTST_REPA':
-            self.use_projector = 1
+            self.use_projector = 1 if user_use_projector is None else user_use_projector
             self.use_channel_fusion = False
         elif self.model_name == 'PatchTST_REPA_Fusion':
-            self.use_projector = 1
-            self.use_channel_fusion = True
+            self.use_projector = 1 if user_use_projector is None else user_use_projector
+            self.use_channel_fusion = True if user_use_channel_fusion is None else user_use_channel_fusion
         else:  # PatchTST
             self.use_projector = 0
             self.use_channel_fusion = False
+
+        # Apply user overrides for PatchTST_REPA_Fusion
+        if user_use_projector is not None and self.model_name == 'PatchTST_REPA_Fusion':
+            self.use_projector = user_use_projector
+        if user_use_channel_fusion is not None and self.model_name == 'PatchTST_REPA_Fusion':
+            self.use_channel_fusion = user_use_channel_fusion
 
         # Feature extractor parameters
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
@@ -232,8 +242,8 @@ class Model(nn.Module):
                                       subtract_last=subtract_last, num_quantiles=num_quantiles,
                                       verbose=verbose, **kwargs)
         else:
-            # Use projector only if use_projector=1
-            if self.use_projector:
+            # Use projector/channel_fusion only if use_projector=1 or use_channel_fusion=1
+            if self.use_projector or self.use_channel_fusion:
                 self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
                                       max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
                                       n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
@@ -280,6 +290,25 @@ class Model(nn.Module):
             # Check head_type
             head_type = getattr(self.model, 'head_type', 'flatten') if hasattr(self, 'model') else 'flatten'
 
+            # Channel Fusion always returns tuple (output, zs)
+            if self.use_channel_fusion:
+                output, zs = self.model(x)  # returns (output2, zs_projected) - only channel fusion branch
+                # Permute output based on head_type
+                if head_type == 'quantile':
+                    # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
+                    output = output.permute(0, 3, 1, 2)
+                else:
+                    # output: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
+                    output = output.permute(0, 2, 1)
+
+                # If use_projector=0, don't return zs for contrastive loss
+                if not self.use_projector:
+                    return output
+
+                # Otherwise return (output, zs) for contrastive learning
+                return output, zs
+
+            # Original PatchTST (non-channel-fusion)
             # Original PatchTST (use_projector=0): return only output
             if not self.use_projector:
                 output = self.model(x)  # returns only output
@@ -292,15 +321,13 @@ class Model(nn.Module):
                     return output
 
             # With projector (use_projector=1): return output and zs
-            # Check if using channel_fusion (returns tuple of 2)
-            if self.use_channel_fusion:
-                output, zs = self.model(x)  # returns (output2, zs_projected) - only channel fusion branch
-                # Permute output from (bs, nvars, pred_len) to (bs, pred_len, nvars)
-                output = output.permute(0, 2, 1)
+            output, zs = self.model(x)  # returns (output, zs_projected)
+            # Permute output based on head_type
+            if head_type == 'quantile':
+                # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
+                output = output.permute(0, 3, 1, 2)
             else:
-                # Original: return (output, zs_projected)
-                output, zs = self.model(x)  # returns (output, zs_projected)
-                # Permute output from (bs, nvars, pred_len) to (bs, pred_len, nvars)
+                # output: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
                 output = output.permute(0, 2, 1)
 
             # Only extract feature extractor features when return_projector=True (training)

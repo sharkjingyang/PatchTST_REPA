@@ -76,6 +76,10 @@ if __name__ == '__main__':
     parser.add_argument('--channel_fusion_n_heads', type=int, default=4,
                         help='Number of attention heads for channel fusion branch (used in PatchTST_REPA_Fusion)')
     parser.add_argument('--d_layers', type=int, default=1, help='Number of Transformer Decoder layers for channel fusion (used in PatchTST_REPA_Fusion)')
+    parser.add_argument('--use_projector', type=int, default=None,
+                        help='Enable projector for contrastive learning (None=auto based on model, 0=disable, 1=enable)')
+    parser.add_argument('--use_channel_fusion', type=int, default=None,
+                        help='Enable channel fusion branch (None=auto based on model, 0=disable, 1=enable)')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')
