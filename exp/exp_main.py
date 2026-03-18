@@ -70,7 +70,7 @@ class Exp_Main(Exp_Basic):
 
         # Get head info
         head_type = type(model_backbone.head).__name__ if model_backbone and hasattr(model_backbone, 'head') else 'None'
-        use_channel_fusion = model_backbone.use_channel_fusion if model_backbone and hasattr(model_backbone, 'use_channel_fusion') else False
+        use_patch_fusion = model_backbone.use_patch_fusion if model_backbone and hasattr(model_backbone, 'use_patch_fusion') else False
 
         # Total parameters
         all_total = sum(p.numel() for p in model.parameters())
@@ -79,7 +79,7 @@ class Exp_Main(Exp_Basic):
         print(f"\nModel Configuration:")
         print(f"  Model:           {model_name}")
         print(f"  Head type:       {head_type}")
-        print(f"  Channel fusion:  {use_channel_fusion}")
+        print(f"  Patch fusion:    {use_patch_fusion}")
 
         # Detect feature extractor
         feature_extractor = None
@@ -123,11 +123,11 @@ class Exp_Main(Exp_Basic):
                 proj_total = sum(p.numel() for p in model_backbone.alignment_mlp.parameters())
                 print(f"  AlignmentMLP:          {proj_total:,}")
 
-        # Channel Fusion components
-        if use_channel_fusion:
-            if hasattr(model_backbone, 'channel_fusion_mlp') and model_backbone.channel_fusion_mlp is not None:
-                cf_mlp_total = sum(p.numel() for p in model_backbone.channel_fusion_mlp.parameters())
-                print(f"  ChannelFusionMLP:      {cf_mlp_total:,}")
+        # Patch Fusion components
+        if use_patch_fusion:
+            if hasattr(model_backbone, 'patch_fusion_mlp') and model_backbone.patch_fusion_mlp is not None:
+                cf_mlp_total = sum(p.numel() for p in model_backbone.patch_fusion_mlp.parameters())
+                print(f"  PatchFusionMLP:        {cf_mlp_total:,}")
             if hasattr(model_backbone, 'transformer_decoder') and model_backbone.transformer_decoder is not None:
                 td_total = sum(p.numel() for p in model_backbone.transformer_decoder.parameters())
                 print(f"  TransformerDecoder:   {td_total:,}")
