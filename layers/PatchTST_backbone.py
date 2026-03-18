@@ -169,9 +169,9 @@ class PatchTST_backbone(nn.Module):
         # Channel Fusion components (only when use_channel_fusion=True)
         self.channel_fusion_mlp = None
         self.transformer_decoder = None
-        self.channel_fusion_projector = None
+        self.alignment_mlp = None
 
-        # Channel Fusion 使用 d_channel=128 减少参数量，然后通过 channel_fusion_projector 投影到 d_extractor 用于对比学习
+        # Channel Fusion 使用 d_channel=128 减少参数量，然后通过 alignment_mlp 投影到 d_extractor 用于对比学习
         d_channel = 128
 
         if self.use_channel_fusion:
@@ -198,8 +198,8 @@ class PatchTST_backbone(nn.Module):
                 dropout=dropout
             )
 
-            # Channel Fusion Projector: d_channel → d_extractor (用于对比学习)
-            self.channel_fusion_projector = nn.Linear(d_channel, d_extractor)
+            # Alignment MLP: d_channel → d_extractor (用于对比学习)
+            self.alignment_mlp = nn.Linear(d_channel, d_extractor)
 
             # Head for Channel Fusion branch (使用 d_channel=128)
             # Options: 'flatten' (Flatten_Head), 'patchwise' (PatchwiseHead), 'quantile' (Quantile_Head)
@@ -262,7 +262,7 @@ class PatchTST_backbone(nn.Module):
             # Output: (bs, nvars, output_patch_num, d_channel) -> reshape -> project -> (bs, nvars, output_patch_num, d_extractor)
             bs, nvars, d_channel, output_patch_num = zs_fused.shape
             zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_channel)  # (bs*nvars*output_patch_num, d_channel)
-            zs_projected_flat = self.channel_fusion_projector(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
+            zs_projected_flat = self.alignment_mlp(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
             zs_projected = zs_projected_flat.reshape(bs, nvars, output_patch_num, self.d_extractor)  # (bs, nvars, output_patch_num, d_extractor)
 
             # Apply Transformer Decoder (使用 d_channel)
