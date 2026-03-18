@@ -157,10 +157,10 @@ Steps: 50 | Train Loss: 0.1234567 | Train MSE: 0.1000000 | Train Contrastive: 0.
 
 7. **PatchwiseHead** (`layers/PatchTST_backbone.py`): Patch-wise prediction head for Channel Fusion
    - Uses shared ResidualBlock per patch (like Chronos2)
-   - Input: `(bs, nvars, d_model, output_patch_num)` from Channel Fusion
-   - ResidualBlock: `d_model` → `d_model//2` → `output_patch_size` with residual connection
+   - Input: `(bs, nvars, d_channel, output_patch_num)` from Channel Fusion (d_channel=128)
+   - ResidualBlock: `d_channel` → `d_channel//2` → `output_patch_size` with residual connection
    - Output: `(bs, nvars, pred_len)`
-   -参数量比 Flatten_Head 更小 (约 300K vs 24M for d_model=768)
+   - 参数量: ~11K (d_channel=128) vs ~300K (d_channel=768)
 
 ### Data Flow
 ```
@@ -201,49 +201,62 @@ The system combines PatchTST with a feature extractor for enhanced feature repre
 
 ### Channel Fusion Branch (model=PatchTST_REPA_Fusion)
 
-When using `model=PatchTST_REPA_Fusion`, an additional branch is added for better Chronos alignment:
+When using `model=PatchTST_REPA_Fusion`, an additional branch is added for better Chronos alignment.
 
-**Architecture**:
+**优化后的架构 (d_channel=128)**:
 ```
 Transformer Encoder (d_model)
   ├─ Branch 1 (original): Encoder output → Flatten Head → pred_1
-  └─ Branch 2 (new):
+  └─ Branch 2 (Channel Fusion):
        ↓ Extract zs from encoder_depth layer
-       ↓ Channel Fusion MLP: flatten d_model*input_patch_num → Linear → d_extractor*output_patch_num
-       ↓ Two Attention Blocks (d_model=d_extractor)
-       ↓ zs_fused → Patchwise Head → pred_2
+       ↓ ChannelFusionMLP: d_model*input_patch_num → d_channel*output_patch_num (d_channel=128)
+       ↓ TransformerDecoder (d_channel=128)
+       ↓ ChannelFusionProjector: d_channel → d_extractor (用于对比学习)
+       ↓ PatchwiseHead (d_channel=128) → pred_2
 ```
+
+**关键优化**:
+- ChannelFusionMLP: 使用较小的 `d_channel=128` 投影，输出维度为 `128 * output_patch_num`（而非原来的 `d_extractor * output_patch_num`）
+- ChannelFusionProjector: 将 128 维度投影到 d_extractor（用于对比学习）
+- TransformerDecoder: 使用 128 维而非 768 维，大幅减少参数量
+- Head: 使用 128 维度输入
 
 **Head Types**:
 - PatchTST and PatchTST_REPA: uses Flatten_Head or Quantile_Head (controlled by head_type)
 - PatchTST_REPA_Fusion: uses Flatten_Head / PatchwiseHead / Quantile_Head (controlled by head_type: 'flatten', 'patchwise', 'quantile')
-  - 'patchwise': PatchwiseHead with shared ResidualBlock per patch (~300K params)
-  - 'flatten': Flatten_Head with full linear layer (~24M params)
+  - 'patchwise': PatchwiseHead with shared ResidualBlock per patch (~11K params with d_channel=128)
+  - 'flatten': Flatten_Head with full linear layer (~50K params with d_channel=128)
   - 'quantile': Quantile_Head for probabilistic forecasting
 
 **Three Model Options**:
 1. `model=PatchTST`: Original PatchTST (baseline)
 2. `model=PatchTST_REPA`: PatchTST with MLP Projector + contrastive loss
-3. `model=PatchTST_REPA_Fusion`: PatchTST with Channel Fusion branch
+3. `model=PatchTST_REPA_Fusion`: PatchTST with optimized Channel Fusion branch
 
 **Key Differences**:
 - PatchTST_REPA uses MLP Projector to align encoder features with feature extractor
-- PatchTST_REPA_Fusion uses Channel Fusion MLP (no projector needed)
-- Channel Fusion uses Two Attention Blocks with d_extractor dimension (768 for Chronos)
+- PatchTST_REPA_Fusion uses Channel Fusion MLP with d_channel=128 (reduced params)
+- Channel Fusion uses ChannelFusionProjector to project 128 → d_extractor for contrastive learning
 - output_patch_num = pred_len // output_patch_size (e.g., 96/16 = 6)
 
 **Shape Transformation Example (Chronos, seq_len=336, pred_len=96)**:
 ```
 input_patch_num = 336/16 = 21
 output_patch_num = 96/16 = 6
-d_extractor = 768
+d_model = 16, d_channel = 128, d_extractor = 768
 
-Channel Fusion MLP:
-  Input:  (B, nvars, 21, 128)  = (B, nvars, input_patch_num, d_model)
-  Flatten → (B, nvars, 2688)   = (B, nvars, d_model*input_patch_num)
-  Linear → (B, nvars, 4608)    = (B, nvars, d_extractor*output_patch_num)
-  Reshape → (B, nvars, 6, 768) = (B, nvars, output_patch_num, d_extractor)
-  Permute → (B, nvars, 768, 6) = (B, nvars, d_extractor, output_patch_num)
+ChannelFusionMLP:
+  Input:  (B, nvars, 21, 16)   = (B, nvars, input_patch_num, d_model)
+  Flatten → (B, nvars, 336)     = (B, nvars, d_model*input_patch_num)
+  Linear → (B, nvars, 768)      = (B, nvars, d_channel*output_patch_num = 128*6)
+  Reshape → (B, nvars, 6, 128) = (B, nvars, output_patch_num, d_channel)
+  Permute → (B, nvars, 128, 6)  = (B, nvars, d_channel, output_patch_num)
+
+ChannelFusionProjector (对比学习用):
+  Input:  (B, nvars, 128, 6)
+  Flatten → (B*nvars*6, 128)
+  Linear → (B*nvars*6, 768)
+  Reshape → (B, nvars, 6, 768) = (B, nvars, output_patch_num, d_extractor) = zs_projected
 ```
 
 ### Quantile Prediction Head
@@ -354,17 +367,25 @@ Note:
 - Projector: MLP 投影器参数量 (仅 PatchTST_REPA)
 - ChannelFusionMLP: Channel Fusion MLP 参数量 (仅 PatchTST_REPA_Fusion)
 - TransformerDecoder: Channel Fusion 的 Transformer Decoder 参数量
+- ChannelFusionProjector: Channel Fusion 的 Projector 参数量 (d_channel → d_extractor)
 - Head: 预测头参数量 (Flatten_Head / PatchwiseHead)
 - RevIN: 可逆实例归一化参数量
 
-**示例参数量 (seq_len=336, pred_len=96, d_model=128, Chronos)**:
-| 模型 | Backbone | Projector | ChannelFusionMLP | TransformerDecoder | Head | Total (excl. Chronos) |
-|------|----------|-----------|------------------|-------------------|------|----------------------|
-| PatchTST | 22,180 | - | - | - | 32,352 | 54,532 |
-| PatchTST_REPA | 22,180 | 302,208 | - | - | 32,352 | 356,740 |
-| PatchTST_REPA_Fusion | 11,394 | - | 1,552,896 | 3,546,625 | 313,760 | 5,424,675 |
+**示例参数量 (seq_len=336, pred_len=96, d_model=16, Chronos, head_type=patchwise)**:
+| 模型 | Backbone | ChannelFusionMLP | TransformerDecoder | ChannelFusionProjector | Head | Total (excl. Chronos) |
+|------|----------|-----------------|-------------------|----------------------|------|----------------------|
+| PatchTST | 11,394 | - | - | - | 12,864 | 24,258 |
+| PatchTST_REPA | 11,394 | - | - | 302,208 | 12,864 | 326,466 |
+| PatchTST_REPA_Fusion | 11,394 | 258,816 | 99,585 | 99,072 | 11,360 | 480,227 |
 
-注: PatchTST_REPA_Fusion 的 Head 使用 PatchwiseHead，参数量约为 313K，比原 Flatten_Head 的 24M 减少约 98.7%
+**示例参数量 (seq_len=336, pred_len=96, d_model=128, Chronos, head_type=patchwise)**:
+| 模型 | Backbone | ChannelFusionMLP | TransformerDecoder | ChannelFusionProjector | Head | Total (excl. Chronos) |
+|------|----------|-----------------|-------------------|----------------------|------|----------------------|
+| PatchTST | 269,826 | - | - | - | 32,352 | 302,178 |
+| PatchTST_REPA | 269,826 | - | - | 302,208 | 32,352 | 604,386 |
+| PatchTST_REPA_Fusion | 269,826 | 2,065,152 | 99,585 | 99,072 | 11,360 | 2,545,000 |
+
+注: PatchTST_REPA_Fusion 使用优化后的 d_channel=128 架构，相比原 d_extractor=768 大幅减少参数量 (d_model=16 时约 480K，d_model=128 时约 2.5M)
 
 ## Directory Structure
 
@@ -644,3 +665,4 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **head_type='patchwise' option**: 添加 head_type='patchwise' 选项，允许在 PatchTST_REPA_Fusion 中选择使用 PatchwiseHead (patchwise) 或 Flatten_Head (flatten)。
 - **Fix return value when return_projector=False**: 修复当 return_projector=False 时模型错误返回 (output, zs) 而不是只返回 output 的问题。
 - **Fix output shape for REPA models**: 修复 PatchTST_REPA 和 PatchTST_REPA_Fusion 的输出形状，添加 permute 使输出为 (bs, pred_len, nvars) 与其他组件一致。
+- **Reduce Channel Fusion parameters**: 优化 PatchTST_REPA_Fusion 的 Channel Fusion 参数量，使用 d_channel=128 替代原来的 d_extractor=768，并添加 ChannelFusionProjector (128→d_extractor) 用于对比学习。显著减少参数量 (d_model=16: 5.4M→480K, d_model=128: 24M→2.5M)。
