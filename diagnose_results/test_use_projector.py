@@ -39,20 +39,18 @@ parser.add_argument('--head_type', type=str, default='patchwise', choices=['flat
 parser.add_argument('--num_quantiles', type=int, default=20)
 parser.add_argument('--contrastive_type', type=str, default='patch_wise', choices=['mean_pool', 'patch_wise'])
 parser.add_argument('--use_projector', type=int, default=None)
-parser.add_argument('--use_channel_fusion', type=int, default=None)
 parser.add_argument('--output_patch_size', type=int, default=16)
 parser.add_argument('--channel_fusion_n_heads', type=int, default=4)
 parser.add_argument('--d_layers', type=int, default=1)
 
 args = parser.parse_args([])
 
-# Test 1: Default PatchTST_REPA_Fusion (use_projector=1, use_channel_fusion=1)
+# Test 1: Default PatchTST_REPA_Fusion (use_projector=1, channel_fusion always on)
 print("=" * 60)
-print("Test 1: Default PatchTST_REPA_Fusion")
+print("Test 1: Default PatchTST_REPA_Fusion (use_projector=1)")
 print("=" * 60)
 args.model = 'PatchTST_REPA_Fusion'
 args.use_projector = None
-args.use_channel_fusion = None
 model1 = PatchTST.Model(args)
 print(f"use_projector: {model1.use_projector}")
 print(f"use_channel_fusion: {model1.use_channel_fusion}")
@@ -62,54 +60,30 @@ print("\n" + "=" * 60)
 print("Test 2: PatchTST_REPA_Fusion with use_projector=0")
 print("=" * 60)
 args.use_projector = 0
-args.use_channel_fusion = 1
 model2 = PatchTST.Model(args)
 print(f"use_projector: {model2.use_projector}")
 print(f"use_channel_fusion: {model2.use_channel_fusion}")
 
-# Test 3: PatchTST_REPA_Fusion with use_channel_fusion=0
+# Test 3: Forward pass with use_projector=0 (no contrastive loss)
 print("\n" + "=" * 60)
-print("Test 3: PatchTST_REPA_Fusion with use_channel_fusion=0")
+print("Test 3: Forward pass with use_projector=0")
 print("=" * 60)
-args.use_projector = 1
-args.use_channel_fusion = 0
+args.use_projector = 0
 model3 = PatchTST.Model(args)
-print(f"use_projector: {model3.use_projector}")
-print(f"use_channel_fusion: {model3.use_channel_fusion}")
-
-# Test 4: PatchTST_REPA_Fusion with both = 0
-print("\n" + "=" * 60)
-print("Test 4: PatchTST_REPA_Fusion with both = 0")
-print("=" * 60)
-args.use_projector = 0
-args.use_channel_fusion = 0
-model4 = PatchTST.Model(args)
-print(f"use_projector: {model4.use_projector}")
-print(f"use_channel_fusion: {model4.use_channel_fusion}")
-
-# Test 5: Forward pass with use_projector=0 but use_channel_fusion=1
-print("\n" + "=" * 60)
-print("Test 5: Forward pass with use_projector=0, use_channel_fusion=1")
-print("=" * 60)
-args.use_projector = 0
-args.use_channel_fusion = 1  # Use channel fusion branch but no projector
-model5 = PatchTST.Model(args)
-print(f"use_projector: {model5.use_projector}")
-print(f"use_channel_fusion: {model5.use_channel_fusion}")
 batch_x = torch.randn(4, 336, 7)
-output = model5(batch_x)
+output = model3(batch_x)
 print(f"Output shape: {output.shape}")
 
-# Test 6: Forward pass with use_projector=1
+# Test 4: Forward pass with use_projector=1 (with contrastive loss)
 print("\n" + "=" * 60)
-print("Test 6: Forward pass with use_projector=1 (should return tuple)")
+print("Test 4: Forward pass with use_projector=1")
 print("=" * 60)
 args.use_projector = 1
-model6 = PatchTST.Model(args)
+model4 = PatchTST.Model(args)
 batch_x = torch.randn(4, 336, 7)
-output, zs = model6(batch_x)
-print(f"output.shape: {output.shape}")
-print(f"zs.shape: {zs.shape}")
+output, zs = model4(batch_x)
+print(f"Output shape: {output.shape}")
+print(f"Zs shape: {zs.shape}")
 
 print("\n" + "=" * 60)
 print("All tests passed!")

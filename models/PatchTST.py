@@ -68,17 +68,17 @@ class Model(nn.Module):
         # Model type detection
         self.model_name = configs.model  # PatchTST, PatchTST_REPA, PatchTST_REPA_Fusion
 
-        # Allow user to override use_projector and use_channel_fusion via args
+        # Allow user to override use_projector via args
         user_use_projector = getattr(configs, 'use_projector', None)
-        user_use_channel_fusion = getattr(configs, 'use_channel_fusion', None)
 
-        # Set use_projector and use_channel_fusion based on model_name, but allow override
+        # Set use_projector and use_channel_fusion based on model_name
+        # PatchTST_REPA_Fusion always uses Channel Fusion (cannot be disabled)
         if self.model_name == 'PatchTST_REPA':
             self.use_projector = 1 if user_use_projector is None else user_use_projector
             self.use_channel_fusion = False
         elif self.model_name == 'PatchTST_REPA_Fusion':
             self.use_projector = 1 if user_use_projector is None else user_use_projector
-            self.use_channel_fusion = True if user_use_channel_fusion is None else user_use_channel_fusion
+            self.use_channel_fusion = True  # Always enabled
         else:  # PatchTST
             self.use_projector = 0
             self.use_channel_fusion = False
@@ -86,8 +86,6 @@ class Model(nn.Module):
         # Apply user overrides for PatchTST_REPA_Fusion
         if user_use_projector is not None and self.model_name == 'PatchTST_REPA_Fusion':
             self.use_projector = user_use_projector
-        if user_use_channel_fusion is not None and self.model_name == 'PatchTST_REPA_Fusion':
-            self.use_channel_fusion = user_use_channel_fusion
 
         # Feature extractor parameters
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')

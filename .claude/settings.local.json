@@ -14,7 +14,8 @@
       "Bash(npx skills find claudeception)",
       "Bash(npx:*)",
       "Bash(git reset:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(pip show:*)"
     ]
   }
 }

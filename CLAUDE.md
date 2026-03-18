@@ -72,10 +72,10 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor chronos --projector_dim 768 \
-  --lambda_contrastive 0.5 \
+  --lambda_contrastive 0.5 --use_projector 1 \
   --chronos_pretrained ./Chronos2
 ```
-This trains PatchTST with Channel Fusion branch for better Chronos alignment.
+This trains PatchTST with Channel Fusion branch for better Chronos alignment. Use `--use_projector 0` to disable contrastive learning.
 
 ### Running with Chronos patch_wise Contrastive Loss
 ```bash
@@ -201,7 +201,7 @@ The system combines PatchTST with a feature extractor for enhanced feature repre
 
 ### Channel Fusion Branch (model=PatchTST_REPA_Fusion)
 
-When using `model=PatchTST_REPA_Fusion`, an additional branch is added for better Chronos alignment.
+When using `model=PatchTST_REPA_Fusion`, Channel Fusion branch is always enabled for better Chronos alignment. Use `--use_projector 0` to disable contrastive learning.
 
 **优化后的架构 (d_channel=128)**:
 ```
@@ -231,12 +231,12 @@ Transformer Encoder (d_model)
 **Three Model Options**:
 1. `model=PatchTST`: Original PatchTST (baseline)
 2. `model=PatchTST_REPA`: PatchTST with MLP Projector + contrastive loss
-3. `model=PatchTST_REPA_Fusion`: PatchTST with optimized Channel Fusion branch
+3. `model=PatchTST_REPA_Fusion`: PatchTST with Channel Fusion branch (always enabled, use `--use_projector 0` to disable contrastive learning)
 
 **Key Differences**:
 - PatchTST_REPA uses MLP Projector to align encoder features with feature extractor
-- PatchTST_REPA_Fusion uses Channel Fusion MLP with d_channel=128 (reduced params)
-- Channel Fusion uses ChannelFusionProjector to project 128 → d_extractor for contrastive learning
+- PatchTST_REPA_Fusion uses Channel Fusion MLP with d_channel=128 (reduced params), always enabled
+- Use `--use_projector` to control contrastive learning: 1 (enabled, default) or 0 (disabled)
 - output_patch_num = pred_len // output_patch_size (e.g., 96/16 = 6)
 
 **Shape Transformation Example (Chronos, seq_len=336, pred_len=96)**:
@@ -326,7 +326,8 @@ zs_tilde: (32, 7, 256)  # (batch, nvars, 256) for Mantis, or (batch, nvars, num_
 Note: Mean pooling over patches is now done in `_compute_contrastive_loss` in `exp/exp_main.py` instead of in the model.
 
 ### Key Hyperparameters
-- `model`: Model name: `PatchTST` (baseline), `PatchTST_REPA` (projector + contrastive), or `PatchTST_REPA_Fusion` (channel fusion)
+- `model`: Model name: `PatchTST` (baseline), `PatchTST_REPA` (projector + contrastive), or `PatchTST_REPA_Fusion` (channel fusion, always enabled)
+- `use_projector`: Enable projector for contrastive learning (default: 1 for REPA models, 0 for PatchTST). Only applies to PatchTST_REPA_Fusion.
 - `patch_len`: Length of each patch (default: 16)
 - `stride`: Stride between patches (default: 16)
 - `seq_len`: Input sequence length (look-back window)
@@ -352,6 +353,7 @@ Note:
 - Best model is automatically saved in memory during training and loaded for test
 - Projector and feature extractor are only created when using `PatchTST_REPA` or `PatchTST_REPA_Fusion` model
 - Model selection is done via `--model` parameter: `PatchTST`, `PatchTST_REPA`, or `PatchTST_REPA_Fusion`
+- `PatchTST_REPA_Fusion` always uses Channel Fusion branch (cannot be disabled), use `--use_projector 0` to disable contrastive learning
 
 ### Parameter Statistics
 
@@ -658,7 +660,7 @@ Standard benchmark datasets: ETTm1, ETTm2, ETTh1, ETTh2, electricity, traffic, w
 - **--padding_patch parameter**: Fixed parameter name (was incorrectly using `--ending` in scripts)
 - **Duplicate head_type argument**: Fixed duplicate `head_type=head_type` in PatchTST.__init__ calls
 - **QuantileLoss not used**: Fixed training loop to actually use QuantileLoss when head_type=quantile (previously used MSE). Validation and test still use MSE with median quantile output.
-- **Model selection via model_name**: Simplified model selection by using `--model` parameter instead of separate `--use_projector` and `--use_channel_fusion` flags. Three options: `PatchTST`, `PatchTST_REPA`, `PatchTST_REPA_Fusion`.
+- **Model selection via model_name**: Simplified model selection by using `--model` parameter. Three options: `PatchTST`, `PatchTST_REPA`, `PatchTST_REPA_Fusion`. `PatchTST_REPA_Fusion` always uses Channel Fusion branch.
 - **Unified head**: Renamed `head_fused` to `head` for channel fusion branch to simplify code.
 - **PatchwiseHead for Channel Fusion**: 为 PatchTST_REPA_Fusion 实现 PatchwiseHead，替换 Flatten_Head。使用共享的 ResidualBlock (d_model → d_model//2 → output_patch_size)，大幅减少参数量 (从 24M 降至约 300K)。
 - **Detailed parameter statistics**: 更新参数统计代码，显示每个模块的详细参数量分解 (Backbone, Projector, ChannelFusionMLP, TransformerDecoder, Head, RevIN)。
