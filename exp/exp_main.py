@@ -398,9 +398,14 @@ class Exp_Main(Exp_Basic):
                         # Slice target to pred_len for feature extraction
                         batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
 
-                        # When using Chronos with PatchTST_REPA (not Fusion), interpolate to seq_len length to keep patch_num consistent
-                        # PatchTST_REPA_Fusion uses Channel Fusion MLP which handles patch_num conversion automatically
-                        if self.args.model == 'PatchTST_REPA' and getattr(self.args, 'feature_extractor', None) == 'chronos':
+                        # When using Chronos with PatchTST_REPA (or PatchTST_REPA_Fusion without channel_fusion),
+                        # interpolate to seq_len length to keep patch_num consistent
+                        # PatchTST_REPA_Fusion with channel_fusion uses Channel Fusion MLP which handles patch_num automatically
+                        need_interpolation = (
+                            self.args.model == 'PatchTST_REPA' or
+                            (self.args.model == 'PatchTST_REPA_Fusion' and hasattr(self.model, 'use_channel_fusion') and not self.model.use_channel_fusion)
+                        )
+                        if need_interpolation and getattr(self.args, 'feature_extractor', None) == 'chronos':
                             batch_y_for_model = F.interpolate(
                                 batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
                                 size=self.args.seq_len,
