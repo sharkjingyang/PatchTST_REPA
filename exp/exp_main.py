@@ -109,13 +109,19 @@ class Exp_Main(Exp_Basic):
             print(f"  Backbone (encoder):    {bb_total:,}")
 
         # Projector
-        if model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
+        if model_name == 'PatchTST_REPA':
+            # PatchTST_REPA uses MLP Projector
             if hasattr(model_backbone, 'projector') and model_backbone.projector is not None:
                 proj_total = sum(p.numel() for p in model_backbone.projector.parameters())
-                print(f"  Projector:             {proj_total:,}")
+                print(f"  Projector (MLP):       {proj_total:,}")
             elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
                 proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
-                print(f"  Projector (2):        {proj_total:,}")
+                print(f"  Projector (MLP, 2):   {proj_total:,}")
+        elif model_name == 'PatchTST_REPA_Fusion':
+            # PatchTST_REPA_Fusion uses ChannelFusionProjector
+            if hasattr(model_backbone, 'channel_fusion_projector') and model_backbone.channel_fusion_projector is not None:
+                proj_total = sum(p.numel() for p in model_backbone.channel_fusion_projector.parameters())
+                print(f"  ChannelFusionProjector: {proj_total:,}")
 
         # Channel Fusion components
         if use_channel_fusion:
