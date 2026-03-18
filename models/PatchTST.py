@@ -303,8 +303,47 @@ class Model(nn.Module):
                 if not self.contrastive:
                     return output
 
-                # Otherwise return (output, zs) for contrastive learning
-                return output, zs
+                # Extract zs_tilde for contrastive learning
+                zs_tilde = None
+                if return_projector and target is not None:
+                    with torch.no_grad():
+                        target_pred = target  # (bs, pred_len, nvars) - already sliced in exp_main.py
+
+                        if self.feature_extractor == 'tivit' and self.tivit is not None:
+                            # TiViT extraction
+                            zs_tilde_list = []
+                            for c in range(target_pred.shape[2]):
+                                channel_input = target_pred[:, :, c:c+1]
+                                channel_embed = self.tivit(channel_input)
+                                zs_tilde_list.append(channel_embed)
+                            zs_tilde = torch.stack(zs_tilde_list, dim=1)
+                        elif self.feature_extractor == 'mantis' and self.mantis is not None:
+                            # Mantis extraction
+                            target_perm = target_pred.permute(0, 2, 1)
+                            target_scaled = F.interpolate(
+                                target_perm.float(),
+                                size=512,
+                                mode='linear',
+                                align_corners=False
+                            )
+                            target_np = target_scaled.cpu().numpy()
+                            bs, nvars, _ = target_scaled.shape
+                            zs_tilde_flat = self.mantis.transform(target_np)
+                            zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
+                            zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)
+                        elif self.feature_extractor == 'chronos' and self.chronos is not None:
+                            # Chronos extraction
+                            target_perm = target_pred.permute(0, 2, 1)
+                            embeddings, loc_scales = self.chronos.embed(target_perm.cpu())
+                            patch_embeddings = []
+                            for emb in embeddings:
+                                num_patches = emb.shape[1] - 2
+                                patch_emb = emb[:, :num_patches, :]
+                                patch_embeddings.append(patch_emb)
+                            zs_tilde = torch.stack(patch_embeddings, dim=0).to(self.device)
+
+                # Return (output, zs, zs_tilde) for contrastive learning
+                return output, zs, zs_tilde
 
             # Original PatchTST (non-channel-fusion)
             # Original PatchTST (contrastive=0): return only output

@@ -82,9 +82,11 @@ print("=" * 60)
 args.contrastive = 1
 model4 = PatchTST.Model(args)
 batch_x = torch.randn(4, 336, 7)
-output, zs = model4(batch_x)
+batch_y = torch.randn(4, 96, 7)  # target for zs_tilde extraction
+output, zs, zs_tilde = model4(batch_x, batch_y, return_projector=True)
 print(f"Output shape: {output.shape}")
 print(f"Zs shape: {zs.shape}")
+print(f"Zs_tilde shape: {zs_tilde.shape}")
 
 print("\n" + "=" * 60)
 print("All tests passed!")
