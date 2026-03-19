@@ -168,10 +168,13 @@ class Model(nn.Module):
             output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
 
             # Denormalize: stack loc_scales and apply inverse
-            # loc_scales: list of (2, nvars) tuples -> (bs, 2, nvars) after stack
-            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars)
-            scale_scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars)
-            output = output * scale_scale_stacked.unsqueeze(-1) + loc_scale_stacked.unsqueeze(-1)  # (bs, nvars, pred_len)
+            # loc_scales: list of ( (nvars,1), (nvars,1) ) tuples - each is (loc, scale) with extra dim
+            # After stack: (bs, nvars, 1) - need to squeeze to (bs, nvars)
+            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
+            scale_scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
+            loc = loc_scale_stacked.squeeze(-1)  # (bs, nvars) - mean
+            scale = scale_scale_stacked.squeeze(-1)  # (bs, nvars) - std
+            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)  # (bs, nvars, pred_len)
 
         # Final permute: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
         output = output.permute(0, 2, 1)
