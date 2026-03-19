@@ -462,6 +462,9 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Dataset files (download separately)
+dataset/
+
 # Pre-trained model weights (download separately)
 Mantis/
 open_clip/
