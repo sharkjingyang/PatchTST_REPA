@@ -1,6 +1,7 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
+import models.Chronos2_head as Chronos2_head_module
 from utils.tools import adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -159,6 +160,7 @@ class Exp_Main(Exp_Basic):
             'PatchTST': PatchTST,
             'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
             'PatchTST_REPA_Fusion': PatchTST,  # PatchTST with channel fusion branch
+            'Chronos2_head': Chronos2_head_module,  # Chronos2 (frozen) + Flatten_Head
         }
 
         # Print model info based on model_name
@@ -167,6 +169,8 @@ class Exp_Main(Exp_Basic):
             print(f"\n>>> Using PatchTST_REPA: contrastive={contrastive} + contrastive loss")
         elif self.args.model == 'PatchTST_REPA_Fusion':
             print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
+        elif self.args.model == 'Chronos2_head':
+            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + Flatten_Head")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
