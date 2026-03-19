@@ -122,15 +122,17 @@ class Model(nn.Module):
             for b in range(bs):
                 var_embeddings = []
                 for v in range(nvars):
-                    context = x_perm[b, v:v+1, :]  # (1, seq_len)
-                    # model.encode returns: (batch=1, num_context_patches + 1 + num_output_patches, d_model)
-                    encoder_out, (locs, scales) = chronos_model.encode(
-                        context=context.float().cpu(),
+                    # chronos model.encode expects context of shape (batch_size, context_length)
+                    context = x_perm[b, v, :]  # (seq_len,) - single variate
+                    # model.encode returns: (encoder_outputs, loc_scale, patched_future_covariates_mask, num_context_patches)
+                    # encoder_outputs is Chronos2EncoderOutput with .last_hidden_state shape (batch, num_context+1+num_output, d_model)
+                    encoder_out, _, _, _ = chronos_model.encode(
+                        context=context.float().cpu().unsqueeze(0),  # (1, seq_len)
                         num_output_patches=self.num_output_patches,
                     )
                     # Extract ONLY the last num_output_patches (future tokens)
-                    # encoder_out: (1, num_context + 1 + num_output, 768)
-                    future_embeds = encoder_out[0, -self.num_output_patches:, :]  # (num_output, 768)
+                    # last_hidden_state: (1, num_context + 1 + num_output, 768)
+                    future_embeds = encoder_out.last_hidden_state[0, -self.num_output_patches:, :]  # (num_output, 768)
                     var_embeddings.append(future_embeds)
 
                 # Stack: (nvars, num_output_patches, 768)
