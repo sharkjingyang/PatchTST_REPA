@@ -6,8 +6,8 @@ seq_len=336
 model_name=Chronos2_head
 
 root_path_name=./dataset/
-data_path_name=weather.csv
-data_name=weather
+data_path_name=ETTh1.csv
+data_name=ETTh1
 
 random_seed=2021
 pred_len=96
@@ -25,6 +25,7 @@ python -u run_longExp.py \
   --pred_len $pred_len \
   --enc_in 7 \
   --patch_len 16 \
+  --use_future_patch 0 \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \

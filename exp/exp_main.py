@@ -78,6 +78,8 @@ class Exp_Main(Exp_Basic):
             print(f"\nModel Configuration:")
             print(f"  Model:           {model_name}")
             print(f"  Head type:       Flatten_Head")
+            use_future = getattr(model, 'use_future_patch', 0)
+            print(f"  Use future patch: {use_future}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
             print(f"Total parameters (excl. Chronos):    {all_total - chronos_total:,}")
@@ -194,7 +196,8 @@ class Exp_Main(Exp_Basic):
         elif self.args.model == 'PatchTST_REPA_Fusion':
             print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
         elif self.args.model == 'Chronos2_head':
-            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + Flatten_Head")
+            use_future = getattr(self.args, 'use_future_patch', 0)
+            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + Flatten_Head, use_future_patch={use_future}")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
