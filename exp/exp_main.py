@@ -416,23 +416,27 @@ class Exp_Main(Exp_Basic):
                         loss_contrastive_per_step.append(0.0)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                        # Slice target to pred_len for feature extraction
-                        batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
-
-                        # When using Chronos with PatchTST_REPA, interpolate to seq_len length to keep patch_num consistent
-                        # PatchTST_REPA_Fusion uses Channel Fusion MLP which handles patch_num automatically
-                        if self.args.model == 'PatchTST_REPA' and getattr(self.args, 'feature_extractor', None) == 'chronos':
-                            batch_y_for_model = F.interpolate(
-                                batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
-                                size=self.args.seq_len,
-                                mode='linear',
-                                align_corners=False
-                            ).permute(0, 2, 1)  # (bs, seq_len, nvars)
-
-                        if hasattr(self.model, 'contrastive') and self.model.contrastive:
-                            outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
+                        # Chronos2_head: simple forward, no batch_y_for_model needed
+                        if self.args.model == 'Chronos2_head':
+                            outputs = self.model(batch_x)
                         else:
-                            outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
+                            # Slice target to pred_len for feature extraction
+                            batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
+
+                            # When using Chronos with PatchTST_REPA, interpolate to seq_len length to keep patch_num consistent
+                            # PatchTST_REPA_Fusion uses Channel Fusion MLP which handles patch_num automatically
+                            if self.args.model == 'PatchTST_REPA' and getattr(self.args, 'feature_extractor', None) == 'chronos':
+                                batch_y_for_model = F.interpolate(
+                                    batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
+                                    size=self.args.seq_len,
+                                    mode='linear',
+                                    align_corners=False
+                                ).permute(0, 2, 1)  # (bs, seq_len, nvars)
+
+                            if hasattr(self.model, 'contrastive') and self.model.contrastive:
+                                outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
+                            else:
+                                outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
