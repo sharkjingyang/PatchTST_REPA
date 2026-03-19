@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Extended implementation of PatchTST with feature alignment using contrastive learning. Supports three feature extractors: **TiViT**, **Mantis**, and **Chronos2**.
+Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head).
 
 ## Quick Start
 
@@ -42,21 +42,65 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor chronos --lambda_contrastive 0.5 \
   --patch_fusion_type split_MLP  # Use separable projection (fewer params)
+
+# Chronos2_head (frozen Chronos2 encoder + prediction head)
+# use_future_patch=0: past tokens + Flatten_Head (~1.5M trainable params)
+# use_future_patch=1: future tokens only + PatchwiseHead (~450K trainable params)
+python -u run_longExp.py --is_training 1 --model Chronos2_head --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --patch_len 16 --batch_size 128 --learning_rate 0.0001 \
+  --use_future_patch 0
 ```
 
 Or use shell scripts:
 ```bash
-sh ./scripts/PatchTST.sh     # Baseline
-sh ./scripts/mantis.sh       # PatchTST_REPA + Mantis
-sh ./scripts/Chronos2.sh     # PatchTST_REPA + Chronos (patch_wise)
+sh ./scripts/PatchTST.sh        # Baseline
+sh ./scripts/mantis.sh          # PatchTST_REPA + Mantis
+sh ./scripts/Chronos2.sh        # PatchTST_REPA + Chronos (patch_wise)
+sh ./scripts/Chronos2_head.sh   # Chronos2_head (frozen encoder + head)
 ```
 
 ## Architecture
 
-### Three Models
+### Four Models
 1. `PatchTST` - Original PatchTST (baseline)
 2. `PatchTST_REPA` - PatchTST + MLP Projector + contrastive loss
 3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch (d_channel=128) + contrastive loss
+4. `Chronos2_head` - Chronos2 (frozen) + prediction head
+
+### Chronos2_head Architecture
+
+Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainable prediction head.
+
+| Mode | Features | Head | Trainable Params |
+|------|----------|------|------------------|
+| `use_future_patch=0` | Past tokens (21 patches) | Flatten_Head | ~1.5M |
+| `use_future_patch=1` | Future tokens only (6 patches) | PatchwiseHead | ~450K |
+
+**Flow (use_future_patch=0)**:
+```
+Input x: (bs, seq_len, nvars)
+  ↓ Chronos2.embed(x) - frozen
+Feature: (bs, nvars, 21, 768)  [21 = seq_len/patch_len]
+  ↓ permute(0,1,3,2): (bs, nvars, 768, 21)
+  ↓ Flatten_Head (individual=True)
+  ↓ flatten: (bs*nvars, 768*21)
+  ↓ linear: (bs*nvars, pred_len)
+Output: (bs, pred_len, nvars)
+```
+
+**Flow (use_future_patch=1)** - Like Chronos2's native prediction:
+```
+Input x: (bs, seq_len, nvars)
+  ↓ Chronos2.model.encode(x, num_output_patches) - frozen
+Feature: (bs, nvars, 28, 768)  [21 + 1 (REG) + 6 (future)]
+  ↓ extract ONLY future tokens: hidden_states[:, -6:, :]
+Feature: (bs, nvars, 6, 768)
+  ↓ PatchwiseHead (per-patch prediction)
+  ↓ ResidualBlock per patch: d_model -> d_ff -> output_patch_size
+Output: (bs, pred_len, nvars)
+```
 
 ### Key Components
 - **Patch_Fusion_MLP**: Projects encoder features to output patch space
@@ -78,12 +122,13 @@ sh ./scripts/Chronos2.sh     # PatchTST_REPA + Chronos (patch_wise)
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion | - |
+| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / Chronos2_head | - |
 | `patch_fusion_type` | fusion_MLP (joint) or split_MLP (separable) | fusion_MLP |
 | `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
 | `lambda_contrastive` | Contrastive loss weight | 0.5 |
+| `use_future_patch` | Chronos2_head: 0=past tokens+Flatten, 1=future tokens+Patchwise | 0 |
 
 ## Parameter Comparison (d_model=16, seq_len=336, pred_len=96)
 
@@ -93,6 +138,8 @@ sh ./scripts/Chronos2.sh     # PatchTST_REPA + Chronos (patch_wise)
 | PatchTST_REPA | - | ~326K |
 | PatchTST_REPA_Fusion (fusion_MLP) | 504K | ~735K |
 | PatchTST_REPA_Fusion (split_MLP) | 2.4K | ~233K |
+| Chronos2_head (use_future_patch=0) | - | ~1.5M (Flatten_Head) |
+| Chronos2_head (use_future_patch=1) | - | ~450K (PatchwiseHead) |
 
 Using `split_MLP` reduces PatchFusionMLP parameters by ~99.5%.
 
@@ -102,12 +149,13 @@ Using `split_MLP` reduces PatchFusionMLP parameters by ~99.5%.
 PatchTST_REPA/
 ├── run_longExp.py              # Main entry point
 ├── layers/
-│   ├── PatchTST_backbone.py   # Core model (Patch_Fusion_MLP, Patch_Split_MLP)
+│   ├── PatchTST_backbone.py   # Core model (Patch_Fusion_MLP, Patch_Split_MLP, Flatten_Head, PatchwiseHead)
 │   ├── PatchTST_layers.py
 │   ├── RevIN.py
 │   └── Tivit.py
 ├── models/
-│   └── PatchTST.py            # Model wrapper
+│   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
+│   └── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head
 ├── exp/
 │   └── exp_main.py            # Training & evaluation
 ├── scripts/                    # Training scripts
