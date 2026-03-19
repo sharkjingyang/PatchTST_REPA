@@ -59,6 +59,7 @@ sh ./scripts/PatchTST.sh        # Baseline
 sh ./scripts/mantis.sh          # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh        # PatchTST_REPA + Chronos (patch_wise)
 sh ./scripts/Chronos2_head.sh   # Chronos2_head (frozen encoder + head)
+sh ./scripts/Chronos_original.sh # Chronos2 direct inference (no training)
 ```
 
 ## Architecture
@@ -71,7 +72,7 @@ sh ./scripts/Chronos2_head.sh   # Chronos2_head (frozen encoder + head)
 
 ### Chronos2_head Architecture
 
-Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainable prediction head.
+Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainable prediction head. **All outputs are denormalized back to original scale** using InstanceNorm inverse (same as Chronos2's native forward pass).
 
 | Mode | Features | Head | Trainable Params |
 |------|----------|------|------------------|
@@ -87,7 +88,8 @@ Feature: (bs, nvars, 21, 768)  [21 = seq_len/patch_len]
   ↓ Flatten_Head (individual=True)
   ↓ flatten: (bs*nvars, 768*21)
   ↓ linear: (bs*nvars, pred_len)
-Output: (bs, pred_len, nvars)
+  ↓ InstanceNorm.inverse (loc, scale from embed)
+Output: (bs, pred_len, nvars) - denormalized
 ```
 
 **Flow (use_future_patch=1)** - Like Chronos2's native prediction:
@@ -99,8 +101,11 @@ Feature: (bs, nvars, 28, 768)  [21 + 1 (REG) + 6 (future)]
 Feature: (bs, nvars, 6, 768)
   ↓ PatchwiseHead (per-patch prediction)
   ↓ ResidualBlock per patch: d_model -> d_ff -> output_patch_size
-Output: (bs, pred_len, nvars)
+  ↓ InstanceNorm.inverse (loc, scale from encode)
+Output: (bs, pred_len, nvars) - denormalized
 ```
+
+**Note on InstanceNorm**: Chronos2 applies instance normalization to input before encoding. The normalization parameters (loc, scale) are captured during encoding and used to denormalize the output. Formula: `denormalized = normalized * scale + loc`.
 
 ### Key Components
 - **Patch_Fusion_MLP**: Projects encoder features to output patch space
@@ -148,6 +153,7 @@ Using `split_MLP` reduces PatchFusionMLP parameters by ~99.5%.
 ```
 PatchTST_REPA/
 ├── run_longExp.py              # Main entry point
+├── test_Chronos2_direct.py      # Chronos2 direct inference test (no training)
 ├── layers/
 │   ├── PatchTST_backbone.py   # Core model (Patch_Fusion_MLP, Patch_Split_MLP, Flatten_Head, PatchwiseHead)
 │   ├── PatchTST_layers.py
@@ -159,5 +165,5 @@ PatchTST_REPA/
 ├── exp/
 │   └── exp_main.py            # Training & evaluation
 ├── scripts/                    # Training scripts
-└── dataset/                    # Data files
+└── dataset/                    # Data files (not tracked in git)
 ```

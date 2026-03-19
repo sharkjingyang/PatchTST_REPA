@@ -121,11 +121,12 @@ class Model(nn.Module):
             x_flat = x_perm.reshape(-1, seq_len)  # (bs*nvars, seq_len)
 
             # Batch encode all at once
-            encoder_out, _, _, _ = chronos_model.encode(
+            encoder_out, loc_scale, _, _ = chronos_model.encode(
                 context=x_flat.float().to(self.device),
                 num_output_patches=self.num_output_patches,
             )
             # encoder_out.last_hidden_state: (bs*nvars, num_context + 1 + num_output, d_model)
+            # loc_scale: (2, bs*nvars) - tuple of (loc, scale) per series
 
             # Extract ONLY the last num_output_patches (future tokens) for each
             # Shape: (bs*nvars, num_output, d_model)
@@ -141,12 +142,19 @@ class Model(nn.Module):
             # Apply PatchwiseHead
             # PatchwiseHead expects: (bs, nvars, d_model, output_patch_num)
             output = self.patchwise_head(embeddings_perm)  # (bs, nvars, pred_len)
+
+            # Denormalize: output is in normalized space, loc_scale is (loc, scale) each (bs*nvars,)
+            # Reshape loc_scale for broadcasting: loc (bs*nvars,) -> (bs, nvars)
+            loc = loc_scale[0].reshape(bs, nvars)  # (bs, nvars)
+            scale = loc_scale[1].reshape(bs, nvars)  # (bs, nvars)
+            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)  # (bs, nvars, pred_len)
         else:
             # Get Chronos2 embeddings using embed() method
-            # Returns: list of (n_variates, num_patches, 768) - one per batch item
+            # Returns: list of (n_variates, num_patches+2, 768) - one per batch item
+            # And loc_scales: list of (2, n_variates) - tuple of (loc, scale) per batch item
             embeddings_list, loc_scales = self.chronos.embed(x_perm.cpu())
 
-            # Stack embeddings: (bs, nvars, num_patches, 768)
+            # Stack embeddings: (bs, nvars, num_patches+2, 768)
             embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
 
             # Only take past tokens (excluding reg token and future token)
@@ -158,6 +166,12 @@ class Model(nn.Module):
 
             # Apply Flatten_Head
             output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
+
+            # Denormalize: stack loc_scales and apply inverse
+            # loc_scales: list of (2, nvars) tuples -> (bs, 2, nvars) after stack
+            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars)
+            scale_scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars)
+            output = output * scale_scale_stacked.unsqueeze(-1) + loc_scale_stacked.unsqueeze(-1)  # (bs, nvars, pred_len)
 
         # Final permute: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
         output = output.permute(0, 2, 1)
