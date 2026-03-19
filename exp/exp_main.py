@@ -291,7 +291,7 @@ class Exp_Main(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
@@ -302,7 +302,7 @@ class Exp_Main(Exp_Basic):
                             else:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
@@ -392,7 +392,7 @@ class Exp_Main(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # Slice target to pred_len for feature extraction
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
                             if hasattr(self.model, 'contrastive') and self.model.contrastive:
@@ -415,7 +415,7 @@ class Exp_Main(Exp_Basic):
                         loss_mse_per_step.append(loss.item())  # Same as total in AMP mode
                         loss_contrastive_per_step.append(0.0)
                 else:
-                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # Slice target to pred_len for feature extraction
                         batch_y_for_model = batch_y[:, -self.args.pred_len:, :]
 
@@ -480,7 +480,7 @@ class Exp_Main(Exp_Basic):
 
                 if (i + 1) % 100 == 0:
                     # Only print detailed loss for PatchTST models with contrastive loss
-                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | contrastive: {4:.7f}".format(
                             i + 1, epoch + 1, loss.item(), mse_loss.item(), contrastive_loss.item()))
                     else:
@@ -614,7 +614,7 @@ class Exp_Main(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
@@ -625,7 +625,7 @@ class Exp_Main(Exp_Basic):
                             else:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
@@ -718,7 +718,7 @@ class Exp_Main(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        if 'Linear' in self.args.model or 'TST' in self.args.model:
+                        if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                             outputs = self.model(batch_x)
                             if isinstance(outputs, tuple):
@@ -729,7 +729,7 @@ class Exp_Main(Exp_Basic):
                             else:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if 'Linear' in self.args.model or 'TST' in self.args.model:
+                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
                         outputs = self.model(batch_x)
                         if isinstance(outputs, tuple):
