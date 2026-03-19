@@ -127,13 +127,13 @@ class Model(nn.Module):
                     # model.encode returns: (encoder_outputs, loc_scale, patched_future_covariates_mask, num_context_patches)
                     # encoder_outputs is Chronos2EncoderOutput with .last_hidden_state shape (batch, num_context+1+num_output, d_model)
                     encoder_out, _, _, _ = chronos_model.encode(
-                        context=context.float().cpu().unsqueeze(0),  # (1, seq_len)
+                        context=context.float().to(self.device).unsqueeze(0),  # (1, seq_len) on same device as model
                         num_output_patches=self.num_output_patches,
                     )
                     # Extract ONLY the last num_output_patches (future tokens)
                     # last_hidden_state: (1, num_context + 1 + num_output, 768)
                     future_embeds = encoder_out.last_hidden_state[0, -self.num_output_patches:, :]  # (num_output, 768)
-                    var_embeddings.append(future_embeds)
+                    var_embeddings.append(future_embeds.to(self.device))
 
                 # Stack: (nvars, num_output_patches, 768)
                 var_embeddings = torch.stack(var_embeddings, dim=0)
