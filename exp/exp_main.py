@@ -70,15 +70,21 @@ class Exp_Main(Exp_Basic):
         if model_name == 'Chronos2_head':
             # Get components directly from Chronos2_head model
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
-            flatten_head_total = sum(p.numel() for p in model.flatten_head.parameters())
+
+            use_future = getattr(model, 'use_future_patch', 0)
+            if use_future:
+                head_total = sum(p.numel() for p in model.patchwise_head.parameters())
+                head_name = 'PatchwiseHead'
+            else:
+                head_total = sum(p.numel() for p in model.flatten_head.parameters())
+                head_name = 'Flatten_Head'
 
             all_total = sum(p.numel() for p in model.parameters())
             all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
             print(f"\nModel Configuration:")
             print(f"  Model:           {model_name}")
-            print(f"  Head type:       Flatten_Head")
-            use_future = getattr(model, 'use_future_patch', 0)
+            print(f"  Head type:       {head_name}")
             print(f"  Use future patch: {use_future}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
@@ -86,7 +92,7 @@ class Exp_Main(Exp_Basic):
             print(f"Trainable parameters:                {all_trainable:,}")
 
             print(f"\nModule Parameters:")
-            print(f"  Flatten_Head:                      {flatten_head_total:,}")
+            print(f"  {head_name}:                      {head_total:,}")
             print(f"\n  Chronos2 (frozen):                {chronos_total:,}")
 
             print("=" * 60)
@@ -197,7 +203,8 @@ class Exp_Main(Exp_Basic):
             print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
         elif self.args.model == 'Chronos2_head':
             use_future = getattr(self.args, 'use_future_patch', 0)
-            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + Flatten_Head, use_future_patch={use_future}")
+            head_name = 'PatchwiseHead' if use_future else 'Flatten_Head'
+            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, use_future_patch={use_future}")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
