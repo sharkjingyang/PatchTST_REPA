@@ -117,30 +117,22 @@ class Model(nn.Module):
             chronos_model = self.chronos.model
             bs, nvars, seq_len = x_perm.shape
 
-            all_embeddings = []
+            # Flatten bs*nvars to process all at once: (bs, nvars, seq_len) -> (bs*nvars, seq_len)
+            x_flat = x_perm.reshape(-1, seq_len)  # (bs*nvars, seq_len)
 
-            for b in range(bs):
-                var_embeddings = []
-                for v in range(nvars):
-                    # chronos model.encode expects context of shape (batch_size, context_length)
-                    context = x_perm[b, v, :]  # (seq_len,) - single variate
-                    # model.encode returns: (encoder_outputs, loc_scale, patched_future_covariates_mask, num_context_patches)
-                    # encoder_outputs is Chronos2EncoderOutput with .last_hidden_state shape (batch, num_context+1+num_output, d_model)
-                    encoder_out, _, _, _ = chronos_model.encode(
-                        context=context.float().to(self.device).unsqueeze(0),  # (1, seq_len) on same device as model
-                        num_output_patches=self.num_output_patches,
-                    )
-                    # Extract ONLY the last num_output_patches (future tokens)
-                    # last_hidden_state: (1, num_context + 1 + num_output, 768)
-                    future_embeds = encoder_out.last_hidden_state[0, -self.num_output_patches:, :]  # (num_output, 768)
-                    var_embeddings.append(future_embeds.to(self.device))
+            # Batch encode all at once
+            encoder_out, _, _, _ = chronos_model.encode(
+                context=x_flat.float().to(self.device),
+                num_output_patches=self.num_output_patches,
+            )
+            # encoder_out.last_hidden_state: (bs*nvars, num_context + 1 + num_output, d_model)
 
-                # Stack: (nvars, num_output_patches, 768)
-                var_embeddings = torch.stack(var_embeddings, dim=0)
-                all_embeddings.append(var_embeddings)
+            # Extract ONLY the last num_output_patches (future tokens) for each
+            # Shape: (bs*nvars, num_output, d_model)
+            future_embeds = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
 
-            # Stack: (bs, nvars, num_output_patches, 768)
-            embeddings = torch.stack(all_embeddings, dim=0).to(self.device)
+            # Reshape back to (bs, nvars, num_output, d_model)
+            embeddings = future_embeds.reshape(bs, nvars, self.num_output_patches, self.chronos_output_dim)
 
             # embeddings shape: (bs, nvars, num_output_patches, 768)
             # Permute to match PatchwiseHead expected format: (bs, nvars, d_model, output_patch_num)
