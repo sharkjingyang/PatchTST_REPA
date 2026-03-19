@@ -66,7 +66,31 @@ class Exp_Main(Exp_Basic):
         model = self.model
         model_name = self.args.model
 
-        # Get model components
+        # Chronos2_head has direct model structure (no model.model nesting)
+        if model_name == 'Chronos2_head':
+            # Get components directly from Chronos2_head model
+            chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
+            flatten_head_total = sum(p.numel() for p in model.flatten_head.parameters())
+
+            all_total = sum(p.numel() for p in model.parameters())
+            all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+            print(f"\nModel Configuration:")
+            print(f"  Model:           {model_name}")
+            print(f"  Head type:       Flatten_Head")
+
+            print(f"\nTotal parameters (all):              {all_total:,}")
+            print(f"Total parameters (excl. Chronos):    {all_total - chronos_total:,}")
+            print(f"Trainable parameters:                {all_trainable:,}")
+
+            print(f"\nModule Parameters:")
+            print(f"  Flatten_Head:                      {flatten_head_total:,}")
+            print(f"\n  Chronos2 (frozen):                {chronos_total:,}")
+
+            print("=" * 60)
+            return
+
+        # Get model components (for PatchTST-style models)
         model_backbone = model.model if hasattr(model, 'model') else None
 
         # Get head info
