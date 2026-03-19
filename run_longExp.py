@@ -80,6 +80,8 @@ if __name__ == '__main__':
                         help='Patch fusion MLP type: fusion_MLP (joint projection) or split_MLP (separable projection)')
     parser.add_argument('--contrastive', type=int, default=None,
                         help='Enable contrastive learning loss (None=auto based on model, 0=disable, 1=enable)')
+    parser.add_argument('--use_future_patch', type=int, default=0,
+                        help='Chronos2_head: use future tokens for prediction (1) or past tokens (0)')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')
