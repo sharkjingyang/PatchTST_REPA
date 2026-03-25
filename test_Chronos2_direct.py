@@ -137,21 +137,8 @@ def main():
     print(f"MAE:  {mae:.6f}")
     print(f"MSE:  {mse:.6f}")
     print(f"RMSE: {rmse:.6f}")
-    print(f"MAPE: {mape:.6f}")
-    print(f"MSPE: {mspe:.6f}")
-    print(f"RSE:  {rse:.6f}")
-    print(f"CORR: {np.mean(corr):.6f}")
     print(f"==============================================")
 
-    # Save results
-    result_folder = './test_results/Chronos2_direct/'
-    if not os.path.exists(result_folder):
-        os.makedirs(result_folder)
-
-    setting = f"{args.data}_{args.seq_len}_{args.pred_len}"
-    np.save(os.path.join(result_folder, f'{setting}_pred.npy'), preds)
-    np.save(os.path.join(result_folder, f'{setting}_true.npy'), trues)
-    print(f"Results saved to {result_folder}")
 
 
 if __name__ == '__main__':

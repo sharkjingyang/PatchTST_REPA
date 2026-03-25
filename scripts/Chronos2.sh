@@ -16,7 +16,7 @@ pred_len=720
 feature_extractor='chronos'
 contrastive_type='patch_wise'
 head_type='patch_wise'
-patch_fusion_type='split_MLP'
+patch_fusion_type='fusion_MLP'
 
 python -u run_longExp.py \
   --random_seed $random_seed \

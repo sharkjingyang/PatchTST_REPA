@@ -10,7 +10,7 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=96
+pred_len=720
 
 python -u run_longExp.py \
   --random_seed $random_seed \
