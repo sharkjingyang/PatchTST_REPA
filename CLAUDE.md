@@ -32,16 +32,18 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.5
+  --feature_extractor chronos --lambda_contrastive 0.1 \
+  --contrastive_type mean_pool  # patch counts differ (41 vs 6), must use mean_pool
 
 # PatchTST_REPA_Fusion (Patch Fusion + Contrastive Loss)
+# Recommended: split_MLP + patch_wise + lambda=0.1
 python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.5 \
-  --patch_fusion_type split_MLP  # Use separable projection (fewer params)
+  --feature_extractor chronos --lambda_contrastive 0.1 \
+  --patch_fusion_type split_MLP --contrastive_type patch_wise
 
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
 # use_future_patch=0: past tokens + Flatten_Head (~1.5M trainable params)
@@ -107,10 +109,25 @@ Output: (bs, pred_len, nvars) - denormalized
 
 **Note on InstanceNorm**: Chronos2 applies instance normalization to input before encoding. The normalization parameters (loc, scale) are captured during encoding and used to denormalize the output. Formula: `denormalized = normalized * scale + loc`.
 
+### Chronos2 Feature Extraction in REPA Models
+
+Both `PatchTST_REPA` and `PatchTST_REPA_Fusion` use `Chronos2.model.encode(batch_x, num_output_patches)` to extract features from the **input** (batch_x), then take the last `num_output_patches` future tokens as `zs_tilde`.
+
+```
+batch_x: (bs, seq_len, nvars)
+  → reshape: (bs*nvars, seq_len)
+  → encode(num_output_patches=pred_len//16)
+  → last_hidden_state: (bs*nvars, 21+1+6, 768)
+  → future tokens [-6:]: (bs, nvars, 6, 768)  ← zs_tilde
+```
+
+This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 768)` for patch-wise contrastive loss.
+`PatchTST_REPA` (no Fusion) has patch_num=41 vs Chronos2's 6, so must use `mean_pool` mode.
+
 ### Key Components
 - **Patch_Fusion_MLP**: Projects encoder features to output patch space
-  - `fusion_MLP`: Joint projection (d_model × patch_num → d_channel × output_patch_num)
-  - `split_MLP`: Separable projection (d_model → d_channel, then patch_num → output_patch_num)
+  - `fusion_MLP` (default): Joint projection (d_model × patch_num → d_channel × output_patch_num)
+  - `split_MLP`: Separable projection (d_model → d_channel, then patch_num → output_patch_num), ~99% fewer params
 - **Patch_Split_MLP**: Separable version with fewer parameters
 - **PatchwiseHead**: Lightweight head using shared ResidualBlock per patch
 
@@ -132,7 +149,8 @@ Output: (bs, pred_len, nvars) - denormalized
 | `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
-| `lambda_contrastive` | Contrastive loss weight | 0.5 |
+| `lambda_contrastive` | Contrastive loss weight | 0.5 (推荐 0.1) |
+| `contrastive_type` | mean_pool / patch_wise | mean_pool |
 | `use_future_patch` | Chronos2_head: 0=past tokens+Flatten, 1=future tokens+Patchwise | 0 |
 
 ## Parameter Comparison (d_model=16, seq_len=336, pred_len=96)
