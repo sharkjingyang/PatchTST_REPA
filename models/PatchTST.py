@@ -130,6 +130,7 @@ class Model(nn.Module):
         # Chronos parameters
         self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
         self.chronos_output_dim = 768  # Chronos2 default output dimension
+        self.num_output_patches = configs.pred_len // 16  # Chronos2 native patch_len = 16
 
         # Build feature extractor (TiViT, Mantis or Chronos) only when using REPA model
         self.tivit = None
@@ -283,6 +284,7 @@ class Model(nn.Module):
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
             return x, x  # Return same output for both when using decomposition
         else:
+            x_original = x  # (bs, seq_len, nvars), 用于 Chronos encode
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
 
             # Check head_type
@@ -332,15 +334,18 @@ class Model(nn.Module):
                             zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
                             zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)
                         elif self.feature_extractor == 'chronos' and self.chronos is not None:
-                            # Chronos extraction
-                            target_perm = target_pred.permute(0, 2, 1)
-                            embeddings, loc_scales = self.chronos.embed(target_perm.cpu())
-                            patch_embeddings = []
-                            for emb in embeddings:
-                                num_patches = emb.shape[1] - 2
-                                patch_emb = emb[:, :num_patches, :]
-                                patch_embeddings.append(patch_emb)
-                            zs_tilde = torch.stack(patch_embeddings, dim=0).to(self.device)
+                            # 用 encode() 从 batch_x 提取 future tokens，与 Patch Fusion 输出对齐
+                            input_perm = x_original.permute(0, 2, 1)  # (bs, nvars, seq_len)
+                            bs_c, nvars_c, seq_len_c = input_perm.shape
+                            x_flat = input_perm.reshape(-1, seq_len_c)  # (bs*nvars, seq_len)
+                            chronos_model = self.chronos.model
+                            encoder_out, loc_scale, _, _ = chronos_model.encode(
+                                context=x_flat.float().to(self.device),
+                                num_output_patches=self.num_output_patches,
+                            )
+                            # 提取 future tokens: (bs*nvars, num_output_patches, 768)
+                            future_embeds = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
+                            zs_tilde = future_embeds.reshape(bs_c, nvars_c, self.num_output_patches, self.chronos_output_dim)
 
                 # Return (output, zs, zs_tilde) for contrastive learning
                 return output, zs, zs_tilde
@@ -404,21 +409,18 @@ class Model(nn.Module):
                         zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
                         zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)  # (bs, nvars, 256)
                     elif self.feature_extractor == 'chronos' and self.chronos is not None:
-                        # Chronos extraction
-                        # Chronos embed expects: (B, C, seq_len)
-                        # target_pred: (bs, pred_len, nvars) -> (bs, nvars, pred_len)
-                        target_perm = target_pred.permute(0, 2, 1)  # (bs, nvars, pred_len)
-                        # Get embeddings: list of (n_variates, num_patches, d_model)
-                        embeddings, loc_scales = self.chronos.embed(target_perm.cpu())
-                        # Extract patch embeddings (exclude REG token and output patch)
-                        # Each embedding: (n_variates, num_patches, 768)
-                        # No mean pooling - done in contrastive loss
-                        patch_embeddings = []
-                        for emb in embeddings:
-                            num_patches = emb.shape[1] - 2  # subtract REG token and output patch
-                            patch_emb = emb[:, :num_patches, :]  # (n_variates, num_patches, 768)
-                            patch_embeddings.append(patch_emb)
-                        zs_tilde = torch.stack(patch_embeddings, dim=0).to(self.device)  # (bs, nvars, num_patches, 768)
+                        # 用 encode() 从 batch_x 提取 future tokens
+                        input_perm = x_original.permute(0, 2, 1)  # (bs, nvars, seq_len)
+                        bs_c, nvars_c, seq_len_c = input_perm.shape
+                        x_flat = input_perm.reshape(-1, seq_len_c)  # (bs*nvars, seq_len)
+                        chronos_model = self.chronos.model
+                        encoder_out, loc_scale, _, _ = chronos_model.encode(
+                            context=x_flat.float().to(self.device),
+                            num_output_patches=self.num_output_patches,
+                        )
+                        # 提取 future tokens: (bs*nvars, num_output_patches, 768)
+                        future_embeds = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
+                        zs_tilde = future_embeds.reshape(bs_c, nvars_c, self.num_output_patches, self.chronos_output_dim)
 
             if return_projector:
                 return output, zs, zs_tilde
