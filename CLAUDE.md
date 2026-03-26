@@ -62,6 +62,7 @@ sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise)
 sh ./scripts/Chronos2_featureHead.sh # Chronos2_head (frozen encoder + head)
 sh ./scripts/Chronos2_zeroshot.sh    # Chronos2 direct inference (no training)
+sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no training)
 ```
 
 ## Architecture
@@ -144,6 +145,36 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 - `patch_wise`: PatchwiseHead
 - `quantile`: Quantile_Head for probabilistic forecasting
 
+### PatchTST-FM-R1 (Zero-shot Baseline)
+
+IBM Research 发布的时序预测基础模型（arXiv:2602.06909，2026），不需要任何训练，直接零样本推理。
+
+| 属性 | 值 |
+|------|-----|
+| 参数量 | ~260M |
+| 上下文长度 | 8192 |
+| Patch 大小 | 16 |
+| Embedding 维度 | 1024 |
+| 输出 | 99 个分位数（取 `quantile_levels=[0.5]` 即中位数） |
+
+**安装**：
+```bash
+pip install git+https://github.com/ibm-granite/granite-tsfm.git@patchtst-fm
+```
+
+**关键特性**：
+- **预测即重建**：mask 预测期后重建，非自回归
+- **变长输入**：支持不同长度序列，内部 RevIN + sinh 归一化，无需手动标准化
+- **Channel-independent**：`models/PatchTST_FM_zeroshot.py` 中将 `(bs, seq_len, nvars)` 展平为 `bs*nvars` 条 1D 序列分别推理
+- **类**：`tsfm_public.models.patchtst_fm.PatchTSTFMForPrediction`（非 HuggingFace transformers 标准类）
+- **模型 ID**：`ibm-research/patchtst-fm-r1`
+
+**推理接口**：
+```python
+output = model(inputs=list_of_1d_tensors, prediction_length=96, quantile_levels=[0.5])
+# output.quantile_predictions: (batch_size, num_quantiles, prediction_length)
+```
+
 ### Output Shapes
 - PatchTST: `(batch, pred_len, nvars)`
 - PatchTST_REPA_Fusion: `(batch, pred_len, nvars)` + `(batch, nvars, output_patch_num, d_extractor)` for contrastive loss
@@ -201,7 +232,8 @@ PatchTST_REPA/
 ├── models/
 │   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
 │   ├── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head
-│   └── Chronos2_zeroshot.py   # Chronos2 direct inference test (no training)
+│   ├── Chronos2_zeroshot.py   # Chronos2 direct inference test (no training)
+│   └── PatchTST_FM_zeroshot.py # PatchTST-FM-R1 zero-shot inference test (no training)
 ├── exp/
 │   └── exp_main.py            # Training & evaluation
 ├── scripts/                    # Training scripts
