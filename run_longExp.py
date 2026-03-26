@@ -108,11 +108,8 @@ if __name__ == '__main__':
     parser.add_argument('--pct_start', type=float, default=0.3, help='pct_start')
     parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
 
-    # GPU
-    parser.add_argument('--use_gpu', type=bool, default=True, help='use gpu')
-    parser.add_argument('--gpu', type=int, default=0, help='gpu')
-    parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
-    parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
+    # Device
+    parser.add_argument('--device', type=str, default='cuda:0', help='device (e.g. cuda:0, cuda:1, cpu)')
     parser.add_argument('--test_flop', action='store_true', default=False, help='See utils/tools for usage')
 
     args = parser.parse_args()
@@ -123,14 +120,9 @@ if __name__ == '__main__':
     torch.manual_seed(fix_seed)
     np.random.seed(fix_seed)
 
-
-    args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
-
-    if args.use_gpu and args.use_multi_gpu:
-        args.dvices = args.devices.replace(' ', '')
-        device_ids = args.devices.split(',')
-        args.device_ids = [int(id_) for id_ in device_ids]
-        args.gpu = args.device_ids[0]
+    if args.device.startswith('cuda') and not torch.cuda.is_available():
+        print('CUDA not available, falling back to CPU')
+        args.device = 'cpu'
 
     print('Args in experiment:')
     print(args)

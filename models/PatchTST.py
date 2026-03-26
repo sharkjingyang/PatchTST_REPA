@@ -132,12 +132,12 @@ class Model(nn.Module):
         self.chronos_output_dim = 768  # Chronos2 default output dimension
         self.num_output_patches = configs.pred_len // 16  # Chronos2 native patch_len = 16
 
-        # Build feature extractor (TiViT, Mantis or Chronos) only when using REPA model
+        # Build feature extractor (TiViT, Mantis or Chronos) only when using REPA model with contrastive
         self.tivit = None
         self.mantis = None
         self.chronos = None
 
-        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
+        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion'] and self.contrastive:
             if self.feature_extractor == 'tivit':
                 # Build TiViT
                 full_seq_len = context_window + target_window

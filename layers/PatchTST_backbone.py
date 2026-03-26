@@ -149,8 +149,6 @@ class PatchTST_backbone(nn.Module):
         # Patch Fusion components (only when use_patch_fusion=True)
         self.patch_fusion_mlp = None
         self.transformer_decoder = None
-        if not self.contrastive:
-            self.alignment_mlp = None
 
         # Patch Fusion 使用 d_channel=128 减少参数量，然后通过 alignment_mlp 投影到 d_extractor 用于对比学习
         # split_MLP 只做 patch_num 投影，保留 d_model，所以 d_channel 直接等于 d_model
@@ -181,8 +179,9 @@ class PatchTST_backbone(nn.Module):
                 dropout=dropout
             )
 
-            # Alignment MLP: d_model → d_extractor (用于对比学习)
-            self.alignment_mlp = build_mlp(d_model, d_extractor)
+            # Alignment MLP: d_model → d_extractor (用于对比学习，contrastive=0 时跳过)
+            if self.contrastive:
+                self.alignment_mlp = build_mlp(d_model, d_extractor)
 
             # Head for Patch Fusion branch
             if head_type == 'patch_wise':
@@ -237,9 +236,10 @@ class PatchTST_backbone(nn.Module):
 
             # For contrastive loss: project d_model → d_extractor
             bs, nvars, d_model, output_patch_num = zs_fused.shape
-            zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_model)  # (bs*nvars*output_patch_num, d_model)
-            zs_projected_flat = self.alignment_mlp(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
-            zs_projected = zs_projected_flat.reshape(bs, nvars, output_patch_num, self.d_extractor)  # (bs, nvars, output_patch_num, d_extractor)
+            if self.contrastive:
+                zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_model)  # (bs*nvars*output_patch_num, d_model)
+                zs_projected_flat = self.alignment_mlp(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
+                zs_projected = zs_projected_flat.reshape(bs, nvars, output_patch_num, self.d_extractor)  # (bs, nvars, output_patch_num, d_extractor)
 
             # Apply Transformer Decoder
             # Input: (bs, nvars, d_model, output_patch_num) -> (bs*nvars, output_patch_num, d_model)

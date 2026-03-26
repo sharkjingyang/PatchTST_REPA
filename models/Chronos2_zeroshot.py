@@ -59,9 +59,8 @@ def main():
     parser.add_argument('--batch_size', type=int, default=128, help='batch size')
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 
-    # GPU
-    parser.add_argument('--use_gpu', type=bool, default=True, help='use gpu')
-    parser.add_argument('--gpu', type=int, default=0, help='gpu')
+    # Device
+    parser.add_argument('--device', type=str, default='cuda:0', help='device (e.g. cuda:0, cuda:1, cpu)')
 
     args = parser.parse_args()
 
@@ -69,7 +68,9 @@ def main():
     set_seed(args.random_seed)
 
     # device
-    device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() and args.use_gpu else 'cpu')
+    if args.device.startswith('cuda') and not torch.cuda.is_available():
+        args.device = 'cpu'
+    device = torch.device(args.device)
     print(f"Using device: {device}")
 
     # load Chronos2 pipeline

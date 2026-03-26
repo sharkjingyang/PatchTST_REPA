@@ -57,11 +57,11 @@ python -u run_longExp.py --is_training 1 --model Chronos2_head --data custom \
 
 Or use shell scripts:
 ```bash
-sh ./scripts/PatchTST.sh        # Baseline
-sh ./scripts/mantis.sh          # PatchTST_REPA + Mantis
-sh ./scripts/Chronos2.sh        # PatchTST_REPA + Chronos (patch_wise)
-sh ./scripts/Chronos2_head.sh   # Chronos2_head (frozen encoder + head)
-sh ./scripts/Chronos_original.sh # Chronos2 direct inference (no training)
+sh ./scripts/PatchTST.sh              # Baseline
+sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
+sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise)
+sh ./scripts/Chronos2_featureHead.sh # Chronos2_head (frozen encoder + head)
+sh ./scripts/Chronos2_zeroshot.sh    # Chronos2 direct inference (no training)
 ```
 
 ## Architecture
@@ -193,7 +193,6 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 ```
 PatchTST_REPA/
 ├── run_longExp.py              # Main entry point
-├── test_Chronos2_direct.py      # Chronos2 direct inference test (no training)
 ├── layers/
 │   ├── PatchTST_backbone.py   # Core model (build_mlp, Patch_Fusion_MLP, TransformerDecoder, Flatten_Head, PatchwiseHead)
 │   ├── PatchTST_layers.py
@@ -201,7 +200,8 @@ PatchTST_REPA/
 │   └── Tivit.py
 ├── models/
 │   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
-│   └── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head
+│   ├── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head
+│   └── Chronos2_zeroshot.py   # Chronos2 direct inference test (no training)
 ├── exp/
 │   └── exp_main.py            # Training & evaluation
 ├── scripts/                    # Training scripts

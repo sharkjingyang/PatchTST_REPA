@@ -8,7 +8,7 @@ data_name=ETTh1
 random_seed=2021
 pred_len=96
 
-python -u test_Chronos2_direct.py \
+python -u models/Chronos2_zeroshot.py \
   --random_seed $random_seed \
   --root_path $root_path_name \
   --data_path $data_path_name \
