@@ -167,7 +167,7 @@ pip install git+https://github.com/ibm-granite/granite-tsfm.git@patchtst-fm
 - **变长输入**：支持不同长度序列，内部 RevIN + sinh 归一化，无需手动标准化
 - **Channel-independent**：`models/PatchTST_FM_zeroshot.py` 中将 `(bs, seq_len, nvars)` 展平为 `bs*nvars` 条 1D 序列分别推理
 - **类**：`tsfm_public.models.patchtst_fm.PatchTSTFMForPrediction`（非 HuggingFace transformers 标准类）
-- **模型 ID**：`ibm-research/patchtst-fm-r1`
+- **本地路径**：`./Patchtst-Fm-R1`（下载后放在该目录，HuggingFace ID: `ibm-research/patchtst-fm-r1`）
 
 **推理接口**：
 ```python
