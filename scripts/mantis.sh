@@ -8,6 +8,7 @@ fi
 seq_len=336
 script_name=$(basename "$0" .sh)
 model_name=PatchTST_REPA
+device="cuda:0"
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
@@ -49,4 +50,5 @@ python -u run_longExp.py \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors \
   --mantis_pretrained ./Mantis \
+  --device $device \
   >logs/LongForecasting/${data_name}_${feature_extractor}_${seq_len}_${pred_len}.log

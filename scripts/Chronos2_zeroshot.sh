@@ -2,6 +2,7 @@ if [ ! -d "./logs" ]; then mkdir ./logs; fi
 
 seq_len=336
 model_name=Chronos_original
+device="cuda:0"
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
 data_name=ETTh1
@@ -19,4 +20,5 @@ python -u models/Chronos2_zeroshot.py \
   --pred_len $pred_len \
   --batch_size 128 \
   --chronos_pretrained ./Chronos2 \
+  --device $device \
   >logs/${data_name}_${seq_len}_${pred_len}_${model_name}.log

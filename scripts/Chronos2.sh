@@ -4,6 +4,7 @@ fi
 
 seq_len=336
 model_name=PatchTST_REPA_Fusion
+device="cuda:0"
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
@@ -52,4 +53,5 @@ python -u run_longExp.py \
   --contrastive_type $contrastive_type \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
+  --device $device \
   >logs/${data_name}_${seq_len}_${pred_len}_${feature_extractor}_${contrastive_type}_${patch_fusion_type}_${head_type}.log

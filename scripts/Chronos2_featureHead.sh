@@ -4,6 +4,7 @@ fi
 
 seq_len=336
 model_name=Chronos2_head
+device="cuda:0"
 
 root_path_name=./dataset/
 data_path_name=ETTh1.csv
@@ -29,4 +30,5 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
+  --device $device \
   >logs/${data_name}_${seq_len}_${pred_len}_${model_name}.log
