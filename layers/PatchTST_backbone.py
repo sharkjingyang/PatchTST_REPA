@@ -1,4 +1,4 @@
-__all__ = ['PatchTST_backbone', 'Patch_Fusion_MLP', 'Patch_Split_MLP', 'TransformerDecoder', 'PatchwiseHead']
+__all__ = ['PatchTST_backbone', 'Patch_Fusion_MLP', 'TransformerDecoder', 'PatchwiseHead']
 
 # Cell
 from typing import Callable, Optional
@@ -13,112 +13,57 @@ from layers.PatchTST_layers import *
 from layers.RevIN import RevIN
 
 
+def build_mlp(hidden_size, z_dim, projected_dim=512):
+    return nn.Sequential(
+        nn.Linear(hidden_size, projected_dim),
+        nn.SiLU(),
+        nn.Linear(projected_dim, projected_dim),
+        nn.SiLU(),
+        nn.Linear(projected_dim, z_dim),
+    )
+
+
 class Patch_Fusion_MLP(nn.Module):
-    """将 (B, nvars, input_patch_num, d_model) 投影到 (B, nvars, output_patch_num, d_channel)
-    直接投影: d_model * input_patch_num → d_channel * output_patch_num（无 hidden 层）
-
-    优化后使用 d_channel=128，大幅减少参数量
+    """将 (B, nvars, d_model, input_patch_num) 投影到 (B, nvars, d_model, output_patch_num)
+    直接投影: d_model * input_patch_num → d_model * output_patch_num（无 hidden 层）
     """
-    def __init__(self, input_patch_num, output_patch_num, d_model, d_channel=128, dropout=0.0):
+    def __init__(self, input_patch_num, output_patch_num, d_model, dropout=0.0):
         super().__init__()
-        self.input_patch_num = input_patch_num
         self.output_patch_num = output_patch_num
-        self.d_channel = d_channel
-
-        input_dim = d_model * input_patch_num
-        output_dim = d_channel * output_patch_num
-
-        # 直接投影，无 hidden 层
-        self.projection = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
-            nn.Dropout(dropout)
-        )
+        self.d_model = d_model
+        self.projection = nn.Linear(d_model * input_patch_num, d_model * output_patch_num)
 
     def forward(self, x):
-        # x: (B, nvars, input_patch_num, d_model)
-        B, nvars, input_patch_num, d_model = x.shape
-
-        # Flatten: (B, nvars, input_patch_num, d_model) → (B, nvars, d_model * input_patch_num)
-        x = x.reshape(B, nvars, -1)
-
-        # 直接投影: (B, nvars, d_model * input_patch_num) → (B, nvars, d_channel * output_patch_num)
-        x = self.projection(x)
-
-        # Reshape: (B, nvars, d_channel * output_patch_num) → (B, nvars, output_patch_num, d_channel)
-        x = x.reshape(B, nvars, self.output_patch_num, -1)
-
-        # Permute: (B, nvars, output_patch_num, d_channel) → (B, nvars, d_channel, output_patch_num)
-        # 适配后续 attention block 格式
-        x = x.permute(0, 1, 3, 2)
-
-        return x
-
-
-class Patch_Split_MLP(nn.Module):
-    """Separable Projection (分离投影)
-    借鉴 MLP-Mixer 思想，分两步投影：
-    1. 特征投影 (Channel-wise): d_model → d_channel
-    2. 时间投影 (Patch-wise): input_patch_num → output_patch_num
-
-    输入: (B, nvars, d_model, patch_num) - 来自 encoder 中间层输出
-    输出: (B, nvars, d_channel, output_patch_num)
-    """
-    def __init__(self, input_patch_num, output_patch_num, d_model, d_channel=128, dropout=0.0):
-        super().__init__()
-        self.input_patch_num = input_patch_num
-        self.output_patch_num = output_patch_num
-        self.d_channel = d_channel
-
-        # Step 1: 特征投影 - 将 d_model 投影到 d_channel
-        self.channel_projection = nn.Linear(d_model, d_channel)
-
-        # Step 2: 时间投影 - 将 input_patch_num 投影到 output_patch_num
-        self.patch_projection = nn.Linear(input_patch_num, output_patch_num)
-
-        self.dropout = nn.Dropout(dropout)
-        self.activation = nn.GELU()
-
-    def forward(self, x):
-        # x: (B, nvars, d_model, patch_num) - 来自 encoder 中间层输出
+        # x: (B, nvars, d_model, input_patch_num)
         B, nvars, d_model, input_patch_num = x.shape
 
-        # 先 permute: (B, nvars, d_model, patch_num) -> (B, nvars, patch_num, d_model)
-        x = x.permute(0, 1, 3, 2)
-
-        # Step 1: 特征投影 (B, nvars, patch_num, d_model) -> (B, nvars, patch_num, d_channel)
-        x = self.channel_projection(x)
-        x = self.activation(x)
-        x = self.dropout(x)
-
-        # Step 2: 时间投影 (B, nvars, patch_num, d_channel) -> (B, nvars, d_channel, output_patch_num)
-        # 先 permute: (B, nvars, patch_num, d_channel) -> (B, nvars, d_channel, patch_num)
-        x = x.permute(0, 1, 3, 2)
-        # 再投影: (B, nvars, d_channel, patch_num) -> (B, nvars, d_channel, output_patch_num)
-        x = self.patch_projection(x)
-        x = self.dropout(x)
+        # Flatten → project → reshape → (B, nvars, d_model, output_patch_num)
+        x = x.reshape(B, nvars, -1)
+        x = self.projection(x)
+        x = x.reshape(B, nvars, d_model, self.output_patch_num)
 
         return x
+
 
 
 class TransformerDecoder(nn.Module):
     """Transformer Decoder，用于在 patch_fusion 之后进一步处理
     使用与 PatchTST_backbone 相同的 n_heads 参数"""
-    def __init__(self, output_patch_num, d_channel, n_heads, d_layers=1, d_ff=None, dropout=0.0):
+    def __init__(self, output_patch_num, d_model, n_heads, d_layers=1, d_ff=None, dropout=0.0):
         super().__init__()
         if d_ff is None:
-            d_ff = d_channel  # 使用 d_channel
+            d_ff = d_model
 
-        # 使用 d_layers 层 TSTEncoderLayer
         self.layers = nn.ModuleList([
             TSTEncoderLayer(
-                q_len=output_patch_num, d_model=d_channel,
+                q_len=output_patch_num, d_model=d_model,
                 n_heads=n_heads, d_ff=d_ff, dropout=dropout, activation='gelu'
             )
             for _ in range(d_layers)
         ])
 
     def forward(self, x):
-        # x: (B*nvars, output_patch_num, d_channel)
+        # x: (B*nvars, output_patch_num, d_model)
         for layer in self.layers:
             x = layer(x)
         return x
@@ -132,7 +77,7 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, projector_dim: int = 768, contrastive: int = 0,
+                 encoder_depth: int = 2, contrastive: int = 0,
                  num_quantiles: int = 20,
                  output_patch_size: int = 16, use_patch_fusion: bool = False, patch_fusion_n_heads: int = 4,
                  d_extractor: int = 768, d_layers: int = 1, patch_fusion_type: str = 'fusion_MLP',
@@ -195,19 +140,11 @@ class PatchTST_backbone(nn.Module):
             elif head_type == 'flatten':
                 self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
-        # MLP Projector for aligning zs with TiViT features (only when contrastive=1 and not use_patch_fusion)
         self.contrastive = contrastive
-        self.alignment_mlp_dim = projector_dim
+        self.alignment_mlp_dim = d_extractor
         self.alignment_mlp = None
         if self.contrastive and not self.use_patch_fusion:
-            # zs shape: [bs, nvars, d_model, patch_num]
-            # Project each patch separately: (bs*nvars*patch_num, d_model) -> (bs*nvars*patch_num, projector_dim)
-            # MLP Projector: d_model -> projector_dim (with GELU activation)
-            self.alignment_mlp = nn.Sequential(
-                nn.Linear(d_model, projector_dim // 2),
-                nn.GELU(),
-                nn.Linear(projector_dim // 2, projector_dim)
-            )
+            self.alignment_mlp = build_mlp(d_model, d_extractor)
 
         # Patch Fusion components (only when use_patch_fusion=True)
         self.patch_fusion_mlp = None
@@ -216,8 +153,7 @@ class PatchTST_backbone(nn.Module):
             self.alignment_mlp = None
 
         # Patch Fusion 使用 d_channel=128 减少参数量，然后通过 alignment_mlp 投影到 d_extractor 用于对比学习
-        d_channel = 128
-
+        # split_MLP 只做 patch_num 投影，保留 d_model，所以 d_channel 直接等于 d_model
         if self.use_patch_fusion:
             # Set required variables for head creation
             self.individual = individual
@@ -225,55 +161,43 @@ class PatchTST_backbone(nn.Module):
             self.target_window = target_window
             self.patch_fusion_type = patch_fusion_type
 
-            # Patch_Fusion_MLP: (B, nvars, input_patch_num, d_model) -> (B, nvars, output_patch_num, d_channel)
+            # Patch_Fusion_MLP: (B, nvars, d_model, patch_num) -> (B, nvars, d_model, output_patch_num)
             if patch_fusion_type == 'split_MLP':
-                self.patch_fusion_mlp = Patch_Split_MLP(
-                    input_patch_num=patch_num,
-                    output_patch_num=output_patch_num,
-                    d_model=d_model,
-                    d_channel=d_channel,
-                    dropout=dropout
-                )
+                # 只投影 patch_num 维度，保留 d_model
+                self.patch_fusion_mlp = nn.Linear(patch_num, output_patch_num)
             else:
                 self.patch_fusion_mlp = Patch_Fusion_MLP(
                     input_patch_num=patch_num,
                     output_patch_num=output_patch_num,
-                    d_model=d_model,
-                    d_channel=d_channel,
-                    dropout=dropout
+                    d_model=d_model
                 )
 
-            # Transformer Decoder: (B*nvars, output_patch_num, d_channel)
+            # Transformer Decoder: (B*nvars, output_patch_num, d_model)
             self.transformer_decoder = TransformerDecoder(
                 output_patch_num=output_patch_num,
-                d_channel=d_channel,
+                d_model=d_model,
                 n_heads=patch_fusion_n_heads,
                 d_layers=d_layers,
                 dropout=dropout
             )
 
-            # Alignment MLP: d_channel → d_extractor (用于对比学习)
-            self.alignment_mlp = nn.Linear(d_channel, d_extractor)
+            # Alignment MLP: d_model → d_extractor (用于对比学习)
+            self.alignment_mlp = build_mlp(d_model, d_extractor)
 
-            # Head for Patch Fusion branch (使用 d_channel=128)
-            # Options: 'flatten' (Flatten_Head), 'patch_wise' (PatchwiseHead), 'quantile' (Quantile_Head)
+            # Head for Patch Fusion branch
             if head_type == 'patch_wise':
-                # Patchwise Head: uses shared ResidualBlock per patch, similar to Chronos2
-                # Reduces parameters from ~24M to ~300K
                 self.head = PatchwiseHead(
                     n_vars=self.n_vars,
-                    d_model=d_channel,
+                    d_model=d_model,
                     output_patch_num=output_patch_num,
                     output_patch_size=output_patch_size,
                     dropout=head_dropout
                 )
             elif head_type == 'flatten':
-                # Flatten Head: flatten all patches then linear project
-                self.head = Flatten_Head(self.individual, self.n_vars, d_channel * output_patch_num,
+                self.head = Flatten_Head(self.individual, self.n_vars, d_model * output_patch_num,
                                          target_window, head_dropout=head_dropout)
             elif head_type == 'quantile':
-                # Quantile Head: for probabilistic forecasting
-                self.head = Quantile_Head(self.n_vars, d_channel, output_patch_num,
+                self.head = Quantile_Head(self.n_vars, d_model, output_patch_num,
                                           target_window, num_quantiles=num_quantiles, dropout=head_dropout)
         
     
@@ -308,27 +232,24 @@ class PatchTST_backbone(nn.Module):
             # zs: (bs, nvars, d_model, patch_num) - from encoder_depth layer
 
             # Apply Patch_Fusion_MLP to get zs_fused
-            # Output: (bs, nvars, d_channel, output_patch_num) where d_channel=128
+            # Output: (bs, nvars, d_model, output_patch_num)
             zs_fused = self.patch_fusion_mlp(zs)
 
-            # For contrastive loss: project d_channel → d_extractor
-            # Input: (bs, nvars, d_channel, output_patch_num)
-            # Output: (bs, nvars, output_patch_num, d_channel) -> reshape -> project -> (bs, nvars, output_patch_num, d_extractor)
-            bs, nvars, d_channel, output_patch_num = zs_fused.shape
-            zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_channel)  # (bs*nvars*output_patch_num, d_channel)
+            # For contrastive loss: project d_model → d_extractor
+            bs, nvars, d_model, output_patch_num = zs_fused.shape
+            zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_model)  # (bs*nvars*output_patch_num, d_model)
             zs_projected_flat = self.alignment_mlp(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
             zs_projected = zs_projected_flat.reshape(bs, nvars, output_patch_num, self.d_extractor)  # (bs, nvars, output_patch_num, d_extractor)
 
-            # Apply Transformer Decoder (使用 d_channel)
-            # Input: (bs, nvars, d_channel, output_patch_num) -> (bs*nvars, output_patch_num, d_channel)
-            zs_fused_flat = zs_fused.permute(0, 1, 3, 2).reshape(-1, output_patch_num, d_channel)
-            zs_fused_processed = self.transformer_decoder(zs_fused_flat)  # (bs*nvars, output_patch_num, d_channel)
+            # Apply Transformer Decoder
+            # Input: (bs, nvars, d_model, output_patch_num) -> (bs*nvars, output_patch_num, d_model)
+            zs_fused_flat = zs_fused.permute(0, 1, 3, 2).reshape(-1, output_patch_num, d_model)
+            zs_fused_processed = self.transformer_decoder(zs_fused_flat)  # (bs*nvars, output_patch_num, d_model)
 
-            # Reshape back: (bs*nvars, output_patch_num, d_channel) -> (bs, nvars, d_channel, output_patch_num)
-            zs_fused_processed = zs_fused_processed.reshape(bs, nvars, output_patch_num, d_channel)
-            zs_fused_processed = zs_fused_processed.permute(0, 1, 3, 2)  # (bs, nvars, d_channel, output_patch_num)
+            # Reshape back: (bs*nvars, output_patch_num, d_model) -> (bs, nvars, d_model, output_patch_num)
+            zs_fused_processed = zs_fused_processed.reshape(bs, nvars, output_patch_num, d_model)
+            zs_fused_processed = zs_fused_processed.permute(0, 1, 3, 2)  # (bs, nvars, d_model, output_patch_num)
 
-            # Apply Head to fused features (使用 d_channel)
             output = self.head(zs_fused_processed)  # (bs, nvars, target_window)
 
         elif self.contrastive and not self.use_patch_fusion:

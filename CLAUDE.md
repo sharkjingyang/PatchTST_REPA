@@ -69,7 +69,7 @@ sh ./scripts/Chronos_original.sh # Chronos2 direct inference (no training)
 ### Four Models
 1. `PatchTST` - Original PatchTST (baseline)
 2. `PatchTST_REPA` - PatchTST + MLP Projector + contrastive loss
-3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch (d_channel=128) + contrastive loss
+3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch + contrastive loss
 4. `Chronos2_head` - Chronos2 (frozen) + prediction head
 
 ### Chronos2_head Architecture
@@ -125,15 +125,23 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 `PatchTST_REPA` (no Fusion) has patch_num=41 vs Chronos2's 6, so must use `mean_pool` mode.
 
 ### Key Components
-- **Patch_Fusion_MLP**: Projects encoder features to output patch space
-  - `fusion_MLP` (default): Joint projection (d_model × patch_num → d_channel × output_patch_num)
-  - `split_MLP`: Separable projection (d_model → d_channel, then patch_num → output_patch_num), ~99% fewer params
-- **Patch_Split_MLP**: Separable version with fewer parameters
+- **`build_mlp(hidden_size, z_dim, projected_dim=512)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear→SiLU→Linear，用于所有 `alignment_mlp`
+- **Patch_Fusion_MLP**: 联合投影 `d_model*patch_num → d_model*output_patch_num`（`fusion_MLP` 模式）
+- **`nn.Linear(patch_num, output_patch_num)`**: `split_MLP` 模式直接内联，仅投影时间维度，保留 `d_model` 不变，参数极少（~258）
+- **TransformerDecoder**: 在 patch fusion 后对 `(bs*nvars, output_patch_num, d_model)` 做自注意力
+- **alignment_mlp**: `build_mlp(d_model, d_extractor)`，将 patch fusion 输出投影到特征提取器空间用于对比损失
 - **PatchwiseHead**: Lightweight head using shared ResidualBlock per patch
+
+### alignment_mlp 统一规范
+两种模式均使用 `build_mlp(d_model, d_extractor, projected_dim=512)`：
+- `PatchTST_REPA`（无 fusion）：输入 `(bs*nvars*patch_num, d_model)` → 输出 `(bs*nvars*patch_num, d_extractor)`
+- `PatchTST_REPA_Fusion`：输入 `(bs*nvars*output_patch_num, d_model)` → 输出 `(bs*nvars*output_patch_num, d_extractor)`
+
+`d_extractor` 由特征提取器决定（Mantis=256，Chronos2/TiViT=768），`projector_dim` 概念已废弃。
 
 ### Head Types
 - `flatten`: Flatten_Head (standard)
-- `patch_wise`: PatchwiseHead (~11K params with d_channel=128)
+- `patch_wise`: PatchwiseHead
 - `quantile`: Quantile_Head for probabilistic forecasting
 
 ### Output Shapes
@@ -153,18 +161,32 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 | `contrastive_type` | mean_pool / patch_wise | mean_pool |
 | `use_future_patch` | Chronos2_head: 0=past tokens+Flatten, 1=future tokens+Patchwise | 0 |
 
-## Parameter Comparison (d_model=16, seq_len=336, pred_len=96)
+## Parameter Comparison
 
-| Model | PatchFusionMLP | Total (excl. Chronos) |
-|-------|----------------|----------------------|
-| PatchTST | - | ~24K |
-| PatchTST_REPA | - | ~326K |
-| PatchTST_REPA_Fusion (fusion_MLP) | 504K | ~735K |
-| PatchTST_REPA_Fusion (split_MLP) | 2.4K | ~233K |
+### PatchTST_REPA_Fusion (split_MLP, d_model=128, seq_len=336, pred_len=96, nvars=21)
+
+| Module | Params |
+|--------|-------:|
+| backbone (encoder) | 272,514 |
+| patch_fusion_mlp (`nn.Linear(42,6)`) | 258 |
+| transformer_decoder | 99,585 |
+| alignment_mlp (`build_mlp(128→512→512→768)`) | 722,688 |
+| head (Flatten_Head) | 73,824 |
+| revin_layer | 42 |
+| **TOTAL** | **1,168,911** |
+
+### 各模型规模对比 (d_model=128, seq_len=336, pred_len=96)
+
+| Model | patch_fusion_mlp | TOTAL |
+|-------|-----------------|-------|
+| PatchTST | - | ~276K |
+| PatchTST_REPA | - | ~1.1M |
+| PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
+| PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
 | Chronos2_head (use_future_patch=0) | - | ~1.5M (Flatten_Head) |
 | Chronos2_head (use_future_patch=1) | - | ~450K (PatchwiseHead) |
 
-Using `split_MLP` reduces PatchFusionMLP parameters by ~99.5%.
+`split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 三层）。
 
 ## Directory Structure
 
@@ -173,7 +195,7 @@ PatchTST_REPA/
 ├── run_longExp.py              # Main entry point
 ├── test_Chronos2_direct.py      # Chronos2 direct inference test (no training)
 ├── layers/
-│   ├── PatchTST_backbone.py   # Core model (Patch_Fusion_MLP, Patch_Split_MLP, Flatten_Head, PatchwiseHead)
+│   ├── PatchTST_backbone.py   # Core model (build_mlp, Patch_Fusion_MLP, TransformerDecoder, Flatten_Head, PatchwiseHead)
 │   ├── PatchTST_layers.py
 │   ├── RevIN.py
 │   └── Tivit.py
