@@ -52,9 +52,8 @@ class Model(nn.Module):
         self.pred_len = configs.pred_len
         self.n_vars = configs.enc_in  # number of variables/channels
         self.patch_len = configs.patch_len  # Chronos uses patch_len=16
-        self.stride = configs.stride
 
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = getattr(configs, 'device', 'cuda:0')
 
         # Chronos parameters
         self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
@@ -171,9 +170,9 @@ class Model(nn.Module):
             # loc_scales: list of ( (nvars,1), (nvars,1) ) tuples - each is (loc, scale) with extra dim
             # After stack: (bs, nvars, 1) - need to squeeze to (bs, nvars)
             loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
-            scale_scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
+            scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
             loc = loc_scale_stacked.squeeze(-1)  # (bs, nvars) - mean
-            scale = scale_scale_stacked.squeeze(-1)  # (bs, nvars) - std
+            scale = scale_stacked.squeeze(-1)  # (bs, nvars) - std
             output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)  # (bs, nvars, pred_len)
 
         # Final permute: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
