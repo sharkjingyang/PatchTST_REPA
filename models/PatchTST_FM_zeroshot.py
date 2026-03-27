@@ -59,8 +59,7 @@ def main():
     # model
     parser.add_argument('--fm_pretrained', type=str, default='./Patchtst-Fm-R1',
                         help='PatchTST-FM pretrained model path or HuggingFace model ID')
-    # 每个 batch 含 bs*nvars 条序列同时送入 FM-R1，显存占用高，建议从 32 开始调
-    parser.add_argument('--batch_size', type=int, default=8, help='batch size of data loader')
+    parser.add_argument('--batch_size', type=int, default=128, help='batch size of data loader')
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 
     # device
