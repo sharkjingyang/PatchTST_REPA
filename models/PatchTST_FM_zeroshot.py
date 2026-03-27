@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import numpy as np
+from tqdm import tqdm
 from tsfm_public.models.patchtst_fm import PatchTSTFMForPrediction
 from data_provider.data_factory import data_provider
 from utils.metrics import metric
@@ -93,7 +94,7 @@ def main():
 
     print("Running PatchTST-FM-R1 zero-shot inference...")
     with torch.no_grad():
-        for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+        for batch_x, batch_y, batch_x_mark, batch_y_mark in tqdm(test_loader, desc="Inferencing"):
             # batch_x: (bs, seq_len, nvars)
             # batch_y: (bs, label_len + pred_len, nvars)
             bs, seq_len, nvars = batch_x.shape
@@ -121,9 +122,6 @@ def main():
 
             preds.append(pred_tensor.numpy())
             trues.append(batch_y_true.numpy())
-
-            if i % 20 == 0:
-                print(f"  Batch {i}/{len(test_loader)}")
 
     # compute metrics
     preds = np.concatenate(preds, axis=0)  # (N, pred_len, nvars)
