@@ -469,6 +469,7 @@ dataset/
 Mantis/
 open_clip/
 Chronos2/
+Patchtst-Fm-R1/
 
 # Reference PatchTST implementation (for comparison only)
 PatchTST-main/
