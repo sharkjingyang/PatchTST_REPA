@@ -46,8 +46,8 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --patch_fusion_type split_MLP --contrastive_type patch_wise
 
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
-# use_future_patch=0: past tokens + Flatten_Head (~1.5M trainable params)
-# use_future_patch=1: future tokens only + PatchwiseHead (~450K trainable params)
+# use_future_patch=0: past tokens + Flatten_Head (pred_len=96: ~1.55M, pred_len=720: ~11.6M, scales linearly)
+# use_future_patch=1: future tokens only + PatchwiseHead (~314K trainable params, fixed regardless of pred_len)
 python -u run_longExp.py --is_training 1 --model Chronos2_head --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
@@ -79,8 +79,8 @@ Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainab
 
 | Mode | Features | Head | Trainable Params |
 |------|----------|------|------------------|
-| `use_future_patch=0` | Past tokens (21 patches) | Flatten_Head | ~1.5M |
-| `use_future_patch=1` | Future tokens only (6 patches) | PatchwiseHead | ~450K |
+| `use_future_patch=0` | Past tokens (21 patches) | Flatten_Head | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), linear in pred_len |
+| `use_future_patch=1` | Future tokens only (6 patches) | PatchwiseHead | ~314K (fixed, independent of pred_len) |
 
 **Flow (use_future_patch=0)**:
 ```
@@ -244,8 +244,8 @@ handle.remove()
 | PatchTST_REPA | - | ~1.1M |
 | PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
 | PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
-| Chronos2_head (use_future_patch=0) | - | ~1.5M (Flatten_Head) |
-| Chronos2_head (use_future_patch=1) | - | ~450K (PatchwiseHead) |
+| Chronos2_head (use_future_patch=0) | - | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), Flatten_Head |
+| Chronos2_head (use_future_patch=1) | - | ~314K (PatchwiseHead, fixed) |
 
 `split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 三层）。
 
