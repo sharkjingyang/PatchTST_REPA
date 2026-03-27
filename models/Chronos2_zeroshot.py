@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import numpy as np
+from tqdm import tqdm
 from chronos import Chronos2Pipeline
 from data_provider.data_factory import data_provider
 from utils.metrics import metric
@@ -92,7 +93,7 @@ def main():
 
     print("Running Chronos2 direct inference...")
     with torch.no_grad():
-        for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+        for batch_x, batch_y, batch_x_mark, batch_y_mark in tqdm(test_loader, desc="Inferencing"):
             # batch_x: (bs, seq_len, nvars)
             # batch_y: (bs, seq_len + pred_len, nvars)
 
@@ -123,9 +124,6 @@ def main():
             # Collect
             preds.append(pred_tensor.detach().cpu().numpy())
             trues.append(batch_y_true.detach().cpu().numpy())
-
-            if i % 20 == 0:
-                print(f"  Batch {i}/{len(test_loader)}")
 
     # Compute metrics
     preds = np.concatenate(preds, axis=0)  # (N, pred_len, nvars)
