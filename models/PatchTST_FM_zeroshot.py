@@ -14,6 +14,10 @@ Usage:
 """
 
 import argparse
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import numpy as np
 from tsfm_public.models.patchtst_fm import PatchTSTFMForPrediction
@@ -36,7 +40,7 @@ def main():
     parser.add_argument('--model_id', type=str, default='test', help='model id')
 
     # data loader
-    parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
+    parser.add_argument('--data', type=str, default='ETTh1', help='dataset type')
     parser.add_argument('--root_path', type=str, default='./data/ETT/', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='ETTh1.csv', help='data file')
     parser.add_argument('--features', type=str, default='M',
@@ -56,7 +60,7 @@ def main():
     parser.add_argument('--fm_pretrained', type=str, default='./Patchtst-Fm-R1',
                         help='PatchTST-FM pretrained model path or HuggingFace model ID')
     # 每个 batch 含 bs*nvars 条序列同时送入 FM-R1，显存占用高，建议从 32 开始调
-    parser.add_argument('--batch_size', type=int, default=32, help='batch size of data loader')
+    parser.add_argument('--batch_size', type=int, default=8, help='batch size of data loader')
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 
     # device

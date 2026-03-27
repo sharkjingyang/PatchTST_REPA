@@ -18,6 +18,6 @@ python -u models/PatchTST_FM_zeroshot.py \
   --features M \
   --seq_len $seq_len \
   --pred_len $pred_len \
-  --batch_size 32 \
+  --batch_size 8 \
   --device $device \
   >logs/${data_name}_${seq_len}_${pred_len}_${model_name}.log
