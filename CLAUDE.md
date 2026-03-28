@@ -45,6 +45,16 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --feature_extractor chronos --lambda_contrastive 0.1 \
   --patch_fusion_type split_MLP --contrastive_type patch_wise
 
+# PatchTST_REPA_Fusion (none mode: 无 fusion MLP，patch_len 自动推导)
+# patch_len/stride/padding_patch 参数会被忽略，自动计算：patch_len = seq_len // output_patch_num
+python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --batch_size 128 --learning_rate 0.0001 \
+  --feature_extractor chronos --lambda_contrastive 0.1 \
+  --patch_fusion_type none --contrastive_type patch_wise
+
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
 # use_future_patch=0: past tokens + Flatten_Head (pred_len=96: ~1.55M, pred_len=720: ~11.6M, scales linearly)
 # use_future_patch=1: future tokens only + PatchwiseHead (~314K trainable params, fixed regardless of pred_len)
@@ -129,6 +139,7 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 - **`build_mlp(hidden_size, z_dim, projected_dim=512)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear→SiLU→Linear，用于所有 `alignment_mlp`
 - **Patch_Fusion_MLP**: 联合投影 `d_model*patch_num → d_model*output_patch_num`（`fusion_MLP` 模式）
 - **`nn.Linear(patch_num, output_patch_num)`**: `split_MLP` 模式直接内联，仅投影时间维度，保留 `d_model` 不变，参数极少（~258）
+- **`none` 模式**: 无 fusion MLP，`patch_len` 自动推导为 `seq_len // output_patch_num`，使 patch_num 天然等于 output_patch_num；`patch_len/stride/padding_patch` 参数被忽略
 - **TransformerDecoder**: 在 patch fusion 后对 `(bs*nvars, output_patch_num, d_model)` 做自注意力
 - **alignment_mlp**: `build_mlp(d_model, d_extractor)`，将 patch fusion 输出投影到特征提取器空间用于对比损失
 - **PatchwiseHead**: Lightweight head using shared ResidualBlock per patch
@@ -214,7 +225,7 @@ handle.remove()
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / Chronos2_head | - |
-| `patch_fusion_type` | fusion_MLP (joint) or split_MLP (separable) | fusion_MLP |
+| `patch_fusion_type` | fusion_MLP (joint) / split_MLP (separable) / none (auto patch_len) | fusion_MLP |
 | `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
@@ -244,6 +255,7 @@ handle.remove()
 | PatchTST_REPA | - | ~1.1M |
 | PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
 | PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
+| PatchTST_REPA_Fusion (none) | 0 | ~1.2M（patch_len 自动=56） |
 | Chronos2_head (use_future_patch=0) | - | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), Flatten_Head |
 | Chronos2_head (use_future_patch=1) | - | ~314K (PatchwiseHead, fixed) |
 

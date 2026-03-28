@@ -76,8 +76,8 @@ if __name__ == '__main__':
     parser.add_argument('--patch_fusion_n_heads', type=int, default=4,
                         help='Number of attention heads for patch fusion branch (used in PatchTST_REPA_Fusion)')
     parser.add_argument('--d_layers', type=int, default=1, help='Number of Transformer Decoder layers for patch fusion (used in PatchTST_REPA_Fusion)')
-    parser.add_argument('--patch_fusion_type', type=str, default='fusion_MLP', choices=['fusion_MLP', 'split_MLP'],
-                        help='Patch fusion MLP type: fusion_MLP (joint projection) or split_MLP (separable projection)')
+    parser.add_argument('--patch_fusion_type', type=str, default='fusion_MLP', choices=['fusion_MLP', 'split_MLP', 'none'],
+                        help='Patch fusion MLP type: fusion_MLP (joint projection), split_MLP (separable projection), or none (no fusion, requires patch_num==output_patch_num)')
     parser.add_argument('--contrastive', type=int, default=None,
                         help='Enable contrastive learning loss (None=auto based on model, 0=disable, 1=enable)')
     parser.add_argument('--use_future_patch', type=int, default=0,

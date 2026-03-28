@@ -89,6 +89,22 @@ class PatchTST_backbone(nn.Module):
         self.revin = revin
         if self.revin: self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
 
+        # Patch Fusion parameters
+        self.use_patch_fusion = use_patch_fusion
+        self.output_patch_size = output_patch_size
+        self.patch_fusion_n_heads = patch_fusion_n_heads
+        self.d_extractor = d_extractor
+
+        # Calculate output_patch_num (needed before patching for 'none' mode)
+        assert target_window % output_patch_size == 0, f"pred_len must be divisible by output_patch_size, got pred_len={target_window}, output_patch_size={output_patch_size}"
+        output_patch_num = target_window // output_patch_size
+
+        # Auto-compute patch_len for 'none' mode: patch_len = seq_len // output_patch_num
+        if patch_fusion_type == 'none' and use_patch_fusion:
+            patch_len = context_window // output_patch_num
+            stride = patch_len
+            padding_patch = None
+
         # Patching
         self.patch_len = patch_len
         self.stride = stride
@@ -97,16 +113,6 @@ class PatchTST_backbone(nn.Module):
         if padding_patch == 'end': # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
-
-        # Patch Fusion parameters
-        self.use_patch_fusion = use_patch_fusion
-        self.output_patch_size = output_patch_size
-        self.patch_fusion_n_heads = patch_fusion_n_heads
-        self.d_extractor = d_extractor
-
-        # Calculate output_patch_num
-        assert target_window % output_patch_size == 0, f"pred_len must be divisible by output_patch_size, got pred_len={target_window}, output_patch_size={output_patch_size}"
-        output_patch_num = target_window // output_patch_size
 
         # Backbone
         self.encoder_depth = encoder_depth
@@ -163,6 +169,10 @@ class PatchTST_backbone(nn.Module):
             if patch_fusion_type == 'split_MLP':
                 # 只投影 patch_num 维度，保留 d_model
                 self.patch_fusion_mlp = nn.Linear(patch_num, output_patch_num)
+            elif patch_fusion_type == 'none':
+                # patch_len 已在上方自动计算，patch_num == output_patch_num 必然成立
+                # self.patch_fusion_mlp 保持 None（已在上方初始化）
+                pass
             else:
                 self.patch_fusion_mlp = Patch_Fusion_MLP(
                     input_patch_num=patch_num,
@@ -232,7 +242,10 @@ class PatchTST_backbone(nn.Module):
 
             # Apply Patch_Fusion_MLP to get zs_fused
             # Output: (bs, nvars, d_model, output_patch_num)
-            zs_fused = self.patch_fusion_mlp(zs)
+            if self.patch_fusion_mlp is not None:
+                zs_fused = self.patch_fusion_mlp(zs)
+            else:
+                zs_fused = zs  # 'none' 模式：patch_num 已天然等于 output_patch_num
 
             # For contrastive loss: project d_model → d_extractor
             bs, nvars, d_model, output_patch_num = zs_fused.shape
