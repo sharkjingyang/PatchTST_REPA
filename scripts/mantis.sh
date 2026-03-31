@@ -21,6 +21,7 @@ e_layers=4
 
 # Choose feature extractor: 'tivit' or 'mantis'
 feature_extractor='mantis'
+contrastive=1
 contrastive_type='mean_pool'
 head_type='flatten'
 
@@ -53,8 +54,9 @@ python -u run_longExp.py \
   --contrastive_type $contrastive_type \
   --head_type $head_type \
   --projector_dim 768 \
+  --contrastive $contrastive \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors \
   --mantis_pretrained ./Mantis \
   --device $device \
-  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_${contrastive_type}_${head_type}.log
+  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_${contrastive_type}_${head_type}.log

@@ -21,6 +21,7 @@ lr=0.0001
 
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
+contrastive=1
 contrastive_type='patch_wise'
 head_type='flatten'
 
@@ -48,7 +49,7 @@ python -u run_longExp.py \
   --patch_len 16\
   --stride 16\
   --padding_patch None\
-  --contrastive 1\
+  --contrastive $contrastive\
   --head_type $head_type\
   --des 'Exp' \
   --train_epochs 20\
@@ -58,4 +59,4 @@ python -u run_longExp.py \
   --projector_dim 768 \
   --lambda_contrastive $lambda_contrastive \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_${contrastive_type}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_${contrastive_type}_${head_type}.log
