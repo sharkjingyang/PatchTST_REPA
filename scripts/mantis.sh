@@ -6,7 +6,6 @@ if [ ! -d "./logs/LongForecasting" ]; then
     mkdir ./logs/LongForecasting
 fi
 seq_len=336
-script_name=$(basename "$0" .sh)
 model_name=PatchTST_REPA
 device="cuda:0"
 
@@ -16,9 +15,14 @@ data_name=ETTh1
 
 random_seed=2021
 pred_len=720
+d_model=16
+d_ff=128
+e_layers=4
 
 # Choose feature extractor: 'tivit' or 'mantis'
 feature_extractor='mantis'
+contrastive_type='mean_pool'
+head_type='flatten'
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -32,11 +36,11 @@ python -u run_longExp.py \
   --seq_len $seq_len \
   --pred_len $pred_len \
   --enc_in 7 \
-  --e_layers 4 \
+  --e_layers $e_layers \
   --encoder_depth 2 \
   --n_heads 4 \
-  --d_model 16 \
-  --d_ff 128 \
+  --d_model $d_model \
+  --d_ff $d_ff \
   --dropout 0.3\
   --fc_dropout 0.3\
   --head_dropout 0\
@@ -46,9 +50,11 @@ python -u run_longExp.py \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor $feature_extractor \
+  --contrastive_type $contrastive_type \
+  --head_type $head_type \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors \
   --mantis_pretrained ./Mantis \
   --device $device \
-  >logs/LongForecasting/${data_name}_${feature_extractor}_${seq_len}_${pred_len}.log
+  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_${contrastive_type}_${head_type}.log

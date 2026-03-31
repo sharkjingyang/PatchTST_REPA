@@ -143,13 +143,10 @@ class Exp_Main(Exp_Basic):
 
         # Projector
         if model_name == 'PatchTST_REPA':
-            # PatchTST_REPA uses MLP Projector
-            if hasattr(model_backbone, 'projector') and model_backbone.projector is not None:
-                proj_total = sum(p.numel() for p in model_backbone.projector.parameters())
-                print(f"  Projector (MLP):       {proj_total:,}")
-            elif hasattr(model, 'model_trend') and hasattr(model.model_trend, 'projector'):
-                proj_total = sum(p.numel() for p in model.model_trend.projector.parameters()) * 2
-                print(f"  Projector (MLP, 2):   {proj_total:,}")
+            # PatchTST_REPA uses alignment_mlp for contrastive learning
+            if hasattr(model_backbone, 'alignment_mlp') and model_backbone.alignment_mlp is not None:
+                proj_total = sum(p.numel() for p in model_backbone.alignment_mlp.parameters())
+                print(f"  AlignmentMLP:          {proj_total:,}")
         elif model_name == 'PatchTST_REPA_Fusion':
             # PatchTST_REPA_Fusion uses AlignmentMLP for contrastive learning
             if hasattr(model_backbone, 'alignment_mlp') and model_backbone.alignment_mlp is not None:

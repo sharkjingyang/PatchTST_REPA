@@ -12,6 +12,12 @@ data_name=ETTh1
 
 random_seed=2021
 pred_len=720
+d_model=16
+d_ff=128
+e_layers=3
+encoder_depth=3
+lambda_contrastive=0.5
+lr=0.0001
 
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
@@ -30,12 +36,12 @@ python -u run_longExp.py \
   --seq_len $seq_len \
   --pred_len $pred_len \
   --enc_in 7 \
-  --e_layers 3 \
-  --encoder_depth 3 \
+  --e_layers $e_layers \
+  --encoder_depth $encoder_depth \
   --d_layers 0 \
   --n_heads 4 \
-  --d_model 16 \
-  --d_ff 128 \
+  --d_model $d_model \
+  --d_ff $d_ff \
   --dropout 0.3\
   --fc_dropout 0.3\
   --head_dropout 0\
@@ -46,10 +52,10 @@ python -u run_longExp.py \
   --head_type $head_type\
   --des 'Exp' \
   --train_epochs 20\
-  --itr 1 --batch_size 128 --learning_rate 0.0001 \
+  --itr 1 --batch_size 128 --learning_rate $lr \
   --feature_extractor $feature_extractor \
   --contrastive_type $contrastive_type \
   --projector_dim 768 \
-  --lambda_contrastive 0.5 \
+  --lambda_contrastive $lambda_contrastive \
   --device $device \
-  >logs/${data_name}_${seq_len}_${pred_len}_${feature_extractor}_${contrastive_type}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_${contrastive_type}_${head_type}.log

@@ -406,7 +406,7 @@ class Model(nn.Module):
                         # 用 embed() 从 batch_x 提取 past tokens 用于对齐
                         input_perm = x_original.permute(0, 2, 1)  # (bs, nvars, seq_len)
                         num_past = x_original.shape[1] // 16  # seq_len // chronos patch_len=16
-                        embeddings_list, _ = self.chronos.embed(input_perm)
+                        embeddings_list, _ = self.chronos.embed(input_perm.cpu())  # list of (bs, nvars, num_past+2, 768) - 2 extra tokens for CLS and SEP
                         embeddings = torch.stack(embeddings_list, dim=0).to(self.device)  # (bs, nvars, num_past+2, 768)
                         zs_tilde = embeddings[:, :, :num_past, :]  # (bs, nvars, num_past, 768)
 

@@ -21,4 +21,4 @@ python -u models/Chronos2_zeroshot.py \
   --batch_size 128 \
   --chronos_pretrained ./Chronos2 \
   --device $device \
-  >logs/${data_name}_${seq_len}_${pred_len}_${model_name}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}.log

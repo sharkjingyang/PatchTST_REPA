@@ -20,4 +20,4 @@ python -u models/PatchTST_FM_zeroshot.py \
   --pred_len $pred_len \
   --batch_size 128 \
   --device $device \
-  >logs/${data_name}_${seq_len}_${pred_len}_${model_name}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}.log
