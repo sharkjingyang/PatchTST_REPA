@@ -59,4 +59,4 @@ python -u run_longExp.py \
   --projector_dim 768 \
   --lambda_contrastive $lambda_contrastive \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_${contrastive_type}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_lc${lambda_contrastive}_${contrastive_type}_${head_type}.log
