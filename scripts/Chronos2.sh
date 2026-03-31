@@ -3,7 +3,7 @@ if [ ! -d "./logs" ]; then
 fi
 
 seq_len=336
-model_name=PatchTST_REPA_Fusion
+model_name=PatchTST_REPA
 device="cuda:0"
 
 root_path_name=./dataset/
@@ -16,8 +16,7 @@ pred_len=720
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
 contrastive_type='patch_wise'
-head_type='patch_wise'
-patch_fusion_type='fusion_MLP'
+head_type='flatten'
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -31,9 +30,9 @@ python -u run_longExp.py \
   --seq_len $seq_len \
   --pred_len $pred_len \
   --enc_in 7 \
-  --e_layers 4 \
-  --encoder_depth 2 \
-  --d_layers 1 \
+  --e_layers 3 \
+  --encoder_depth 3 \
+  --d_layers 0 \
   --n_heads 4 \
   --d_model 16 \
   --d_ff 128 \
@@ -44,7 +43,6 @@ python -u run_longExp.py \
   --stride 16\
   --padding_patch None\
   --contrastive 1\
-  --patch_fusion_type $patch_fusion_type\
   --head_type $head_type\
   --des 'Exp' \
   --train_epochs 20\
@@ -54,4 +52,4 @@ python -u run_longExp.py \
   --projector_dim 768 \
   --lambda_contrastive 0.5 \
   --device $device \
-  >logs/${data_name}_${seq_len}_${pred_len}_${feature_extractor}_${contrastive_type}_${patch_fusion_type}_${head_type}.log
+  >logs/${data_name}_${seq_len}_${pred_len}_${feature_extractor}_${contrastive_type}_${head_type}.log
