@@ -276,6 +276,30 @@ class Exp_Main(Exp_Basic):
 
         return loss
 
+    def _compute_temporal_contrastive_loss(self, zs_raw, tau=0.1):
+        """
+        Temporal Contrastive Regularization (TCR) loss.
+        Constrains encoder latent: adjacent patches closer, distant patches farther.
+
+        Args:
+            zs_raw: (B, C, d_model, P) — raw encoder intermediate output from PatchTST_TCR_backbone
+            tau: temperature
+
+        Returns:
+            scalar InfoNCE loss
+        """
+        zs = zs_raw.permute(0, 1, 3, 2)  # (B, C, P, D)
+        B, C, P, D = zs.shape
+        if P < 2:
+            return torch.tensor(0.0, device=zs_raw.device)
+        h = F.normalize(zs, dim=-1)
+        h = h.reshape(B * C, P, D)
+        sim = torch.bmm(h, h.transpose(1, 2)) / tau   # (B*C, P, P)
+        pos = sim[:, :-1, :].diagonal(offset=1, dim1=1, dim2=2)   # (B*C, P-1)
+        log_sum_exp = torch.logsumexp(sim[:, :-1, :], dim=-1)      # (B*C, P-1)
+        loss = -(pos - log_sum_exp).mean()
+        return loss
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
@@ -355,6 +379,7 @@ class Exp_Main(Exp_Basic):
         loss_per_step = []
         loss_mse_per_step = []
         loss_contrastive_per_step = []
+        loss_temporal_per_step = []
 
         train_steps = len(train_loader)
         best_val_loss = float('inf')  # Track best validation loss
@@ -378,6 +403,7 @@ class Exp_Main(Exp_Basic):
             train_loss = []
             train_mse_loss = []
             train_contrastive_loss = []
+            train_temporal_loss = []
 
             self.model.train()
             epoch_time = time.time()
@@ -402,6 +428,8 @@ class Exp_Main(Exp_Basic):
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
                             if hasattr(self.model, 'contrastive') and self.model.contrastive:
                                 outputs, _, _ = self.model(batch_x, batch_y_pred, return_projector=True)  # Get final output + features
+                            elif hasattr(self.model, 'temporal_contrastive') and self.model.temporal_contrastive:
+                                outputs, _ = self.model(batch_x, batch_y_pred, return_projector=True)
                             else:
                                 outputs = self.model(batch_x, batch_y_pred)  # Original PatchTST: returns only output
                         else:
@@ -419,6 +447,7 @@ class Exp_Main(Exp_Basic):
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(loss.item())  # Same as total in AMP mode
                         loss_contrastive_per_step.append(0.0)
+                        loss_temporal_per_step.append(0.0)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # Chronos2_head: simple forward, no batch_y_for_model needed
@@ -440,8 +469,13 @@ class Exp_Main(Exp_Basic):
 
                             if hasattr(self.model, 'contrastive') and self.model.contrastive:
                                 outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)  # Get final output + projected features + TiViT features
+                                zs_raw = None
+                            elif hasattr(self.model, 'temporal_contrastive') and self.model.temporal_contrastive:
+                                outputs, zs_raw = self.model(batch_x, batch_y_for_model, return_projector=True)
+                                zs_project, zs_tilde = None, None
                             else:
                                 outputs = self.model(batch_x, batch_y_for_model)  # Original PatchTST: returns only output
+                                zs_raw = None
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -470,28 +504,40 @@ class Exp_Main(Exp_Basic):
                         mse_loss = criterion(outputs, batch_y_pred)
 
                     # Contrastive loss for feature alignment (only when using projector)
+                    contrastive_loss = torch.tensor(0.0, device=self.device)
+                    temporal_loss = torch.tensor(0.0, device=self.device)
+                    loss = mse_loss
+
                     if hasattr(self.model, 'contrastive') and self.model.contrastive:
-                        lambda_loss = self.args.lambda_contrastive
                         contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
-                        loss = mse_loss + lambda_loss * contrastive_loss
-                    else:
-                        contrastive_loss = torch.tensor(0.0, device=self.device)
-                        loss = mse_loss
+                        loss = loss + self.args.lambda_contrastive * contrastive_loss
+
+                    if hasattr(self.model, 'temporal_contrastive') and self.model.temporal_contrastive and zs_raw is not None:
+                        lambda_temporal = getattr(self.args, 'lambda_temporal', 0.0)
+                        tau = getattr(self.args, 'tau', 0.1)
+                        temporal_loss = self._compute_temporal_contrastive_loss(zs_raw, tau=tau)
+                        loss = loss + lambda_temporal * temporal_loss
 
                     train_loss.append(loss.item())
                     train_mse_loss.append(mse_loss.item())
                     train_contrastive_loss.append(contrastive_loss.item())
+                    train_temporal_loss.append(temporal_loss.item())
 
                     # Record loss per step
                     loss_per_step.append(loss.item())
                     loss_mse_per_step.append(mse_loss.item())
                     loss_contrastive_per_step.append(contrastive_loss.item())
+                    loss_temporal_per_step.append(temporal_loss.item())
 
                 if (i + 1) % 100 == 0:
                     # Only print detailed loss for PatchTST models with contrastive loss
                     if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                        print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | contrastive: {4:.7f}".format(
-                            i + 1, epoch + 1, loss.item(), mse_loss.item(), contrastive_loss.item()))
+                        if self.args.model == 'PatchTST_TCR':
+                            print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | temporal: {4:.7f}".format(
+                                i + 1, epoch + 1, loss.item(), mse_loss.item(), temporal_loss.item()))
+                        else:
+                            print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | contrastive: {4:.7f}".format(
+                                i + 1, epoch + 1, loss.item(), mse_loss.item(), contrastive_loss.item()))
                     else:
                         print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
@@ -516,6 +562,7 @@ class Exp_Main(Exp_Basic):
             train_loss = np.average(train_loss)
             train_mse_loss = np.average(train_mse_loss)
             train_contrastive_loss = np.average(train_contrastive_loss)
+            train_temporal_loss = np.average(train_temporal_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
@@ -531,8 +578,12 @@ class Exp_Main(Exp_Basic):
 
             # Format: *** at the end if best model updated
             best_suffix = ' ***' if is_best_update else ''
-            print("Epoch: {} | cost time: {:.3f} | lr: {:.4e} | Steps: {} | Train Loss: {:.7f} | Train MSE: {:.7f} | Train Contrastive: {:.7f} | Vali Loss: {:.7f} | Test Loss: {:.7f}{}".format(
-                epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss, best_suffix))
+            if self.args.model == 'PatchTST_TCR':
+                print("Epoch: {} | cost time: {:.3f} | lr: {:.4e} | Steps: {} | Train Loss: {:.7f} | Train MSE: {:.7f} | Train Temporal: {:.7f} | Vali Loss: {:.7f} | Test Loss: {:.7f}{}".format(
+                    epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, train_temporal_loss, vali_loss, test_loss, best_suffix))
+            else:
+                print("Epoch: {} | cost time: {:.3f} | lr: {:.4e} | Steps: {} | Train Loss: {:.7f} | Train MSE: {:.7f} | Train Contrastive: {:.7f} | Vali Loss: {:.7f} | Test Loss: {:.7f}{}".format(
+                    epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss, best_suffix))
 
             # Early stopping check
             if vali_loss >= best_val_loss:
@@ -558,7 +609,8 @@ class Exp_Main(Exp_Basic):
                   steps=np.arange(len(loss_per_step)),
                   loss=np.array(loss_per_step),
                   loss_mse=np.array(loss_mse_per_step),
-                  loss_contrastive=np.array(loss_contrastive_per_step))
+                  loss_contrastive=np.array(loss_contrastive_per_step),
+                  loss_temporal=np.array(loss_temporal_per_step))
         print(f"Loss curve saved to {results_folder}loss_per_step.npz")
 
         # Plot and save loss curves

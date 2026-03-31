@@ -76,12 +76,19 @@ class Model(nn.Module):
         if self.model_name == 'PatchTST_REPA':
             self.contrastive = 1 if user_contrastive is None else user_contrastive
             self.use_patch_fusion = False
+            self.temporal_contrastive = 0
         elif self.model_name == 'PatchTST_REPA_Fusion':
             self.contrastive = 1 if user_contrastive is None else user_contrastive
             self.use_patch_fusion = True  # Always enabled
+            self.temporal_contrastive = 0
+        elif self.model_name == 'PatchTST_TCR':
+            self.contrastive = 0
+            self.use_patch_fusion = False
+            self.temporal_contrastive = 1
         else:  # PatchTST
             self.contrastive = 0
             self.use_patch_fusion = False
+            self.temporal_contrastive = 0
 
         # Feature extractor parameters
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
@@ -255,6 +262,20 @@ class Model(nn.Module):
                                       patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
                                       patch_fusion_type=patch_fusion_type,
                                       verbose=verbose, **kwargs)
+            elif self.model_name == 'PatchTST_TCR':
+                from layers.PatchTST_TCR_backbone import PatchTST_TCR_backbone
+                self.model = PatchTST_TCR_backbone(
+                                      c_in=c_in, context_window=context_window, target_window=target_window,
+                                      patch_len=patch_len, stride=stride, max_seq_len=max_seq_len,
+                                      n_layers=n_layers, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v,
+                                      d_ff=d_ff, norm=norm, attn_dropout=attn_dropout, dropout=dropout, act=act,
+                                      key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm,
+                                      store_attn=store_attn, pe=pe, learn_pe=learn_pe,
+                                      fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual,
+                                      revin=revin, affine=affine, subtract_last=subtract_last,
+                                      encoder_depth=encoder_depth, verbose=verbose, **kwargs)
             else:
                 # Original PatchTST: no projector params
                 self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -283,6 +304,13 @@ class Model(nn.Module):
             x = res + trend
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
             return x, x  # Return same output for both when using decomposition
+        elif self.model_name == 'PatchTST_TCR':
+            x = x.permute(0, 2, 1)    # (bs, nvars, seq_len)
+            output, zs_raw = self.model(x)
+            output = output.permute(0, 2, 1)    # (bs, pred_len, nvars)
+            if return_projector:
+                return output, zs_raw
+            return output
         else:
             x_original = x  # (bs, seq_len, nvars), 用于 Chronos encode
             x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]

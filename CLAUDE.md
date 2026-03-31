@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head).
+Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head). Also includes **PatchTST_TCR** (Temporal Contrastive Regularization, self-supervised, no external FM).
 
 ## Quick Start
 
@@ -66,9 +66,21 @@ python -u run_longExp.py --is_training 1 --model Chronos2_head --data custom \
   --use_future_patch 0
 ```
 
+# PatchTST_TCR (Temporal Contrastive Regularization, no external FM)
+# InfoNCE on encoder patch representations: adjacent patches closer, distant patches farther
+# lambda_temporal: TCR loss weight (推荐 0.1); tau: temperature (推荐 0.1)
+python -u run_longExp.py --is_training 1 --model PatchTST_TCR --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --lambda_temporal 0.1 --tau 0.1
+```
+
 Or use shell scripts:
 ```bash
 sh ./scripts/PatchTST.sh              # Baseline
+sh ./scripts/PatchTST_TCR.sh         # PatchTST_TCR (TCR self-supervised regularization)
 sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise)
 sh ./scripts/Chronos2_featureHead.sh # Chronos2_head (frozen encoder + head)
@@ -78,11 +90,12 @@ sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no tr
 
 ## Architecture
 
-### Four Models
+### Five Models
 1. `PatchTST` - Original PatchTST (baseline)
-2. `PatchTST_REPA` - PatchTST + MLP Projector + contrastive loss
+2. `PatchTST_REPA` - PatchTST + MLP Projector + contrastive loss (外部 FM 对齐)
 3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch + contrastive loss
-4. `Chronos2_head` - Chronos2 (frozen) + prediction head
+4. `PatchTST_TCR` - PatchTST + Temporal Contrastive Regularization (自约束，无外部 FM)
+5. `Chronos2_head` - Chronos2 (frozen) + prediction head
 
 ### Chronos2_head Architecture
 
@@ -136,6 +149,37 @@ batch_x: (bs, seq_len, nvars)
 - `num_past = seq_len // 16`（seq_len=336 时为 21）
 - 与 `PatchTST_REPA`（stride=16，patch_num=21）完全匹配，可用 `patch_wise` 对齐
 - 旧方案（future tokens via `encode()`）已废弃：future tokens 过特化于 Chronos2 自身输出头，表示质量差
+
+### PatchTST_TCR Architecture
+
+Self-supervised temporal contrastive regularization. No external FM required. Backbone in `layers/PatchTST_TCR_backbone.py`.
+
+**Flow**:
+```
+Input x: (bs, seq_len, nvars)
+  ↓ RevIN norm
+  ↓ Patching: (bs, nvars, patch_num, patch_len)
+  ↓ TSTiEncoder (full n_layers)
+      → z: (bs, nvars, d_model, patch_num)        ← final output for head
+      → zs_raw: (bs, nvars, d_model, patch_num)   ← encoder_depth 层输出，用于 TCR loss
+  ↓ Flatten_Head: (bs, nvars, pred_len)
+  ↓ RevIN denorm
+Output: (bs, pred_len, nvars)
+```
+
+**TCR Loss** (InfoNCE on patch representations):
+```
+zs_raw → permute → (B, C, P, D)
+h = normalize(zs_raw, dim=-1), reshape → (B*C, P, D)
+sim = bmm(h, h.T) / tau                  # (B*C, P, P)
+pos = sim[:, t, t+1]  for t in 0..P-2   # (B*C, P-1)  相邻 patch 相似度
+L_temporal = -mean(pos - logsumexp(sim[:, t, :]))
+Total: Loss = MSE + lambda_temporal * L_temporal
+```
+
+**与 PatchTST_REPA 的区别**：
+- PatchTST_REPA: `zs_projected` 经 alignment_mlp 投影到 d_extractor，与外部 FM 对齐
+- PatchTST_TCR: `zs_raw` 直接在 d_model 空间做时序约束，无需外部 FM，无额外可学习参数
 
 ### Key Components
 - **`build_mlp(hidden_size, z_dim, projected_dim=512)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear→SiLU→Linear，用于所有 `alignment_mlp`
@@ -226,13 +270,15 @@ handle.remove()
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / Chronos2_head | - |
+| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / PatchTST_TCR / Chronos2_head | - |
 | `patch_fusion_type` | fusion_MLP (joint) / split_MLP (separable) / none (auto patch_len) | fusion_MLP |
 | `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
-| `lambda_contrastive` | Contrastive loss weight | 0.5 (推荐 0.1) |
+| `lambda_contrastive` | Contrastive loss weight (REPA models) | 0.5 (推荐 0.1) |
 | `contrastive_type` | mean_pool / patch_wise | mean_pool |
+| `lambda_temporal` | TCR loss weight (PatchTST_TCR) | 0.0 (推荐 0.1) |
+| `tau` | TCR temperature (PatchTST_TCR) | 0.1 |
 | `use_future_patch` | Chronos2_head: 0=past tokens+Flatten, 1=future tokens+Patchwise | 0 |
 
 ## Parameter Comparison
@@ -254,6 +300,7 @@ handle.remove()
 | Model | patch_fusion_mlp | TOTAL |
 |-------|-----------------|-------|
 | PatchTST | - | ~921K |
+| PatchTST_TCR | - | ~921K（与 PatchTST 完全一致，TCR 无额外参数） |
 | PatchTST_REPA | - | ~1.1M |
 | PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
 | PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
@@ -326,16 +373,19 @@ PatchTST_REPA/
 ├── run_longExp.py              # Main entry point
 ├── layers/
 │   ├── PatchTST_backbone.py   # Core model (build_mlp, Patch_Fusion_MLP, TransformerDecoder, Flatten_Head, PatchwiseHead)
+│   ├── PatchTST_TCR_backbone.py  # TCR backbone (simplified, no alignment_mlp; returns zs_raw for TCR loss)
 │   ├── PatchTST_layers.py
 │   ├── RevIN.py
 │   └── Tivit.py
 ├── models/
-│   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
+│   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / PatchTST_TCR
 │   ├── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head
 │   ├── Chronos2_zeroshot.py   # Chronos2 direct inference test (no training)
 │   └── PatchTST_FM_zeroshot.py # PatchTST-FM-R1 zero-shot inference test (no training)
 ├── exp/
 │   └── exp_main.py            # Training & evaluation
 ├── scripts/                    # Training scripts
+│   ├── PatchTST_TCR.sh        # PatchTST_TCR training script
+│   └── ...
 └── dataset/                    # Data files (not tracked in git)
 ```

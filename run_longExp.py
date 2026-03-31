@@ -61,6 +61,8 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_depth', type=int, default=2, help='which layer to extract intermediate output')
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
     parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
+    parser.add_argument('--lambda_temporal', type=float, default=0.0, help='weight for temporal contrastive loss (TCR); 0=disabled')
+    parser.add_argument('--tau', type=float, default=0.1, help='temperature for temporal contrastive loss (TCR)')
     parser.add_argument('--contrastive_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise'],
                         help='contrastive loss type: mean_pool (mean pooling) or patch_wise (interpolate then per-patch)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')
