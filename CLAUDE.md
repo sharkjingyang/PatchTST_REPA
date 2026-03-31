@@ -27,13 +27,14 @@ python -u run_longExp.py --is_training 1 --model PatchTST --data custom \
   --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001
 
 # PatchTST_REPA (MLP Projector + Contrastive Loss)
+# stride=16 使 patch_num=21 与 Chronos2 past tokens 数量一致，可用 patch_wise 对齐
 python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
+  --patch_len 16 --stride 16 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor chronos --lambda_contrastive 0.1 \
-  --contrastive_type mean_pool  # patch counts differ (41 vs 6), must use mean_pool
+  --contrastive_type patch_wise  # stride=16: patch_num=21 == Chronos2 past tokens (21)
 
 # PatchTST_REPA_Fusion (Patch Fusion + Contrastive Loss)
 # Recommended: split_MLP + patch_wise + lambda=0.1
@@ -122,18 +123,19 @@ Output: (bs, pred_len, nvars) - denormalized
 
 ### Chronos2 Feature Extraction in REPA Models
 
-Both `PatchTST_REPA` and `PatchTST_REPA_Fusion` use `Chronos2.model.encode(batch_x, num_output_patches)` to extract features from the **input** (batch_x), then take the last `num_output_patches` future tokens as `zs_tilde`.
+Both `PatchTST_REPA` and `PatchTST_REPA_Fusion` use `Chronos2Pipeline.embed(batch_x)` to extract **past encoder tokens** as `zs_tilde`. Past tokens are bidirectionally contextualized (T5 encoder)，与 PatchTST 双向 attention 的表示空间更匹配。
 
 ```
 batch_x: (bs, seq_len, nvars)
-  → reshape: (bs*nvars, seq_len)
-  → encode(num_output_patches=pred_len//16)
-  → last_hidden_state: (bs*nvars, 21+1+6, 768)
-  → future tokens [-6:]: (bs, nvars, 6, 768)  ← zs_tilde
+  → permute: (bs, nvars, seq_len)
+  → chronos.embed(input_perm.cpu())        # pin_memory 需要 CPU tensor
+  → embeddings: (bs, nvars, num_past+2, 768)  # +2 为 CLS/SEP special tokens
+  → past tokens [:num_past]: (bs, nvars, 21, 768)  ← zs_tilde
 ```
 
-This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 768)` for patch-wise contrastive loss.
-`PatchTST_REPA` (no Fusion) has patch_num=41 vs Chronos2's 6, so must use `mean_pool` mode.
+- `num_past = seq_len // 16`（seq_len=336 时为 21）
+- 与 `PatchTST_REPA`（stride=16，patch_num=21）完全匹配，可用 `patch_wise` 对齐
+- 旧方案（future tokens via `encode()`）已废弃：future tokens 过特化于 Chronos2 自身输出头，表示质量差
 
 ### Key Components
 - **`build_mlp(hidden_size, z_dim, projected_dim=512)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear→SiLU→Linear，用于所有 `alignment_mlp`
@@ -152,8 +154,8 @@ This aligns with `PatchTST_REPA_Fusion`'s Patch Fusion output `(bs, nvars, 6, 76
 `d_extractor` 由特征提取器决定（Mantis=256，Chronos2/TiViT=768），`projector_dim` 概念已废弃。
 
 ### Head Types
-- `flatten`: Flatten_Head (standard)
-- `patch_wise`: PatchwiseHead
+- `flatten`: Flatten_Head (standard)，所有模型均支持
+- `patch_wise`: PatchwiseHead，**仅 `PatchTST_REPA_Fusion` 支持**（非 Fusion 路径无此 head）
 - `quantile`: Quantile_Head for probabilistic forecasting
 
 ### PatchTST-FM-R1 (Zero-shot Baseline)
@@ -251,11 +253,22 @@ handle.remove()
 
 | Model | patch_fusion_mlp | TOTAL |
 |-------|-----------------|-------|
-| PatchTST | - | ~276K |
+| PatchTST | - | ~921K |
 | PatchTST_REPA | - | ~1.1M |
 | PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
 | PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
 | PatchTST_REPA_Fusion (none) | 0 | ~1.2M（patch_len 自动=56） |
+
+### PatchTST 参数规模 (seq_len=336, pred_len=96, e_layers=3, patch_len=16)
+
+| enc_in | d_model | d_ff | n_heads | stride | patch_num | backbone | head | TOTAL |
+|--------|---------|------|---------|--------|-----------|----------|------|-------|
+| 21 | 128 | 256 | 16 | 8 | 42 | 404,995 | 516,192 | ~921K |
+| 21 | 16 | 64 | 4 | 8 | 42 | 10,787 | 64,608 | ~75K |
+| 21 | 16 | 128 | 4 | 8 | 42 | 17,123 | 64,608 | ~82K |
+| 7 | 16 | 128 | 4 | 16 | 22 | 16,803 | 33,888 | ~51K |
+
+head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小，head 参数越少。
 | Chronos2_head (use_future_patch=0) | - | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), Flatten_Head |
 | Chronos2_head (use_future_patch=1) | - | ~314K (PatchwiseHead, fixed) |
 
