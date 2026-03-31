@@ -274,6 +274,51 @@ head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小
 
 `split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 三层）。
 
+## Latent Space Quality Evaluation
+
+**目标**：判断 latent space 本身的好坏（不依赖外部参考），以及对齐后是否有改善。
+
+### 指标体系
+
+| 指标 | 衡量什么 | 是否需要外部参考 |
+|------|---------|----------------|
+| Temporal Locality (TL) | patch 间表示的时序连续性 | 否 |
+| CKA(zs, zs_tilde) | PatchTST 与 Chronos 的对齐程度 | 是（Chronos） |
+
+### 1. Temporal Locality（patch-level）
+
+latent shape 为 `(B, C, P, D)`，在 patch 维度计算相邻 patch 距离：
+
+```python
+# latent: (B, C, P, D)
+diff = latent[:, :, 1:, :] - latent[:, :, :-1, :]          # (B, C, P-1, D)
+TL = (diff.norm(dim=-1) / (latent[:, :, :-1, :].norm(dim=-1) + 1e-8)).mean().item()
+```
+
+注意：这是 **patch-level TL**（非原始 token-level），衡量相邻 patch 表示是否平滑过渡。
+对比对象：`zs_tilde`（Chronos）、`zs`（PatchTST contrastive=0）、`zs`（PatchTST contrastive=1）。
+
+### 2. CKA（对齐程度）
+
+```python
+def cka(X, Y):
+    # X, Y: (N, D)，先 center
+    X = X - X.mean(0); Y = Y - Y.mean(0)
+    hsic_xy = (X @ Y.T).pow(2).sum()
+    hsic_xx = (X @ X.T).pow(2).sum()
+    hsic_yy = (Y @ Y.T).pow(2).sum()
+    return (hsic_xy / (hsic_xx * hsic_yy).sqrt()).item()
+```
+
+### 参考：LatentTSF 的发现
+
+LatentTSF（ICML，arXiv:2602.00297）提出了 **Latent Chaos** 概念：MSE 训练的模型预测精度高但 latent 时序混乱。
+- 原始观测空间 TL ≈ 12.94（参考基线）
+- 标准模型 latent TL ≈ 94.03（混乱 7×）
+- 损失函数：`ℒ = α·ℒ_Pred + β·ℒ_Align`，α=10，β=15
+  - `ℒ_Pred = ||Z_Y - Ẑ_Y||²_F`（latent MSE）
+  - `ℒ_Align = 1 - cos_sim(Z_Y, Ẑ_Y)`（cosine 距离，与本项目 contrastive loss 等价）
+
 ## Directory Structure
 
 ```

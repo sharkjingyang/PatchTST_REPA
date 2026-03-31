@@ -113,7 +113,7 @@ class Model(nn.Module):
                 projector_dim = 768  # Chronos2 output dimension
                 print(f"Using Chronos feature extractor, auto-adjusting projector_dim to {projector_dim}")
         self.feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = getattr(configs, 'device', 'cuda:0')
 
         # TiViT parameters
         self.tivit_model_name = getattr(configs, 'tivit_model', 'laion/CLIP-ViT-B-16-laion2B-s34B-b88K')
