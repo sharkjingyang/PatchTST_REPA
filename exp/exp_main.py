@@ -520,9 +520,9 @@ class Exp_Main(Exp_Basic):
 
                     if hasattr(self.model, 'temporal_contrastive') and self.model.temporal_contrastive and zs_raw is not None:
                         lambda_temporal = getattr(self.args, 'lambda_temporal', 0.0)
+                        tau = getattr(self.args, 'tau', 0.1)
+                        temporal_loss = self._compute_temporal_contrastive_loss(zs_raw, tau=tau)
                         if lambda_temporal > 0:
-                            tau = getattr(self.args, 'tau', 0.1)
-                            temporal_loss = self._compute_temporal_contrastive_loss(zs_raw, tau=tau)
                             loss = loss + lambda_temporal * temporal_loss
 
                     train_loss.append(loss.item())

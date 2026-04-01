@@ -11,7 +11,7 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-from layers.PatchTST_layers import TSTiEncoder, Flatten_Head
+from layers.PatchTST_backbone import TSTiEncoder, Flatten_Head
 from layers.RevIN import RevIN
 
 
@@ -54,7 +54,7 @@ class PatchTST_TCR_backbone(nn.Module):
         self.backbone = TSTiEncoder(
             c_in, patch_num=patch_num, patch_len=patch_len, max_seq_len=max_seq_len,
             n_layers=n_layers, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v,
-            d_ff=d_ff, attn_dropout=attn_dropout, dropout=dropout, act=act,
+            d_ff=d_ff, norm=norm, attn_dropout=attn_dropout, dropout=dropout, act=act,
             key_padding_mask=key_padding_mask, padding_var=padding_var,
             attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm,
             store_attn=store_attn, pe=pe, learn_pe=learn_pe,
