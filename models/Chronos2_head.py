@@ -17,28 +17,22 @@ from layers.PatchTST_backbone import Flatten_Head, PatchwiseHead
 class Model(nn.Module):
     """Chronos2 + prediction head model for time series forecasting.
 
-    This model uses Chronos2 (frozen) to extract features, then uses a prediction head.
+    embed_type controls how Chronos2 is used:
 
-    Flow (use_future_patch=0):
-        Input x: (bs, seq_len, nvars)
-            ↓ Chronos2.embed(x) - frozen
-        Feature: (bs, nvars, num_patches, 768)  [num_patches = seq_len/16]
-            ↓ permute(0,1,3,2): (bs, nvars, 768, num_patches)
-            ↓ Flatten_Head (individual=True)
-            ↓ flatten: (bs*nvars, 768*num_patches)
-            ↓ linear: (bs*nvars, pred_len)
-        Output: (bs, nvars, pred_len) → permute → (bs, pred_len, nvars)
+    "past":
+        chronos.embed(x) → past tokens (seq_len // patch_len) → Flatten_Head → output
+        [same as old use_future_patch=0]
 
-    Flow (use_future_patch=1):
-        Input x: (bs, seq_len, nvars)
-            ↓ Chronos2.model.encode(x, num_output_patches) - frozen
-        Feature: (bs, nvars, num_context_patches + 1 + num_output_patches, 768)
-            [num_context_patches = seq_len/16, num_output_patches = pred_len/16]
-            ↓ extract ONLY future tokens: hidden_states[:, -num_output_patches:]
-        Feature: (bs, nvars, num_output_patches, 768)
-            ↓ PatchwiseHead (per-patch prediction, like Chronos2)
-            ↓ ResidualBlock per patch: d_model -> d_ff -> output_patch_size
-        Output: (bs, nvars, pred_len) → permute → (bs, pred_len, nvars)
+    "predict":
+        chronos.model.encode(x, num_output_patches) → future tokens (pred_len // patch_len)
+        → PatchwiseHead → output
+        [same as old use_future_patch=1]
+
+    "future":
+        Training:  chronos.embed(future_seq) → future tokens (pred_len // patch_len)
+                   → Flatten_Head → output  (teacher-forcing with ground-truth future)
+        Inference: chronos.model.encode(x, num_output_patches) → last num_output_patches tokens
+                   → same Flatten_Head → output  (no ground-truth available)
     """
 
     def __init__(self, configs, **kwargs):
@@ -47,135 +41,135 @@ class Model(nn.Module):
         if not HAS_CHRONOS:
             raise ImportError("chronos is not installed. Please install it with: pip install chronos-forecasting")
 
-        # Load parameters
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
-        self.n_vars = configs.enc_in  # number of variables/channels
+        self.n_vars = configs.enc_in
         self.patch_len = configs.patch_len  # Chronos uses patch_len=16
 
         self.device = getattr(configs, 'device', 'cuda:0')
-
-        # Chronos parameters
         self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
-        self.chronos_output_dim = 768  # Chronos2 output dimension
-        self.use_future_patch = getattr(configs, 'use_future_patch', 0)  # Whether to use future tokens
+        self.chronos_output_dim = 768
+        self.embed_type = getattr(configs, 'chronos_embed_type', 'past')
 
         # Build Chronos2 (frozen)
         self.chronos = Chronos2Pipeline.from_pretrained(self.chronos_pretrained, device_map=self.device)
-        # Register chronos.model as sub-module so its params are included in model.parameters()
         self.add_module('chronos_model', self.chronos.model)
         self.chronos.model.eval()
         for param in self.chronos.model.parameters():
             param.requires_grad = False
 
-        # num_patches = past tokens = seq_len // patch_len
-        self.num_patches = self.seq_len // self.patch_len  # e.g., 336/16 = 21
+        # num_patches: past tokens = seq_len // patch_len (e.g., 336/16 = 21)
+        self.num_patches = self.seq_len // self.patch_len
+        # num_output_patches: future tokens = pred_len // patch_len (e.g., 96/16 = 6)
+        self.num_output_patches = self.pred_len // self.patch_len
 
-        # num_output_patches for future tokens (used when use_future_patch=1)
-        self.num_output_patches = self.pred_len // self.patch_len  # e.g., 96/16 = 6
+        individual = getattr(configs, 'individual', 0)
+        head_dropout = getattr(configs, 'head_dropout', 0.0)
 
-        self.configs = configs  # Store for later use in forward
-
-        if self.use_future_patch:
-            # Use PatchwiseHead (like Chronos2 - per-patch prediction)
+        if self.embed_type == 'predict':
+            # PatchwiseHead: per-patch prediction (like Chronos2 native)
             self.patchwise_head = PatchwiseHead(
                 n_vars=self.n_vars,
                 d_model=self.chronos_output_dim,
                 output_patch_num=self.num_output_patches,
                 output_patch_size=self.patch_len,
-                dropout=getattr(configs, 'head_dropout', 0.0)
+                dropout=head_dropout
             )
-            self.head_type = 'patch_wise'
-        else:
-            # Use Flatten_Head
-            self.head_nf = self.chronos_output_dim * self.num_patches
+        elif self.embed_type == 'future':
+            # Flatten_Head on future tokens (num_output_patches tokens)
+            self.head_nf = self.chronos_output_dim * self.num_output_patches
             self.flatten_head = Flatten_Head(
-                individual=getattr(configs, 'individual', 0),
+                individual=individual,
                 n_vars=self.n_vars,
                 nf=self.head_nf,
                 target_window=self.pred_len,
-                head_dropout=getattr(configs, 'head_dropout', 0.0)
+                head_dropout=head_dropout
             )
-            self.head_type = 'flatten'
+        else:  # "past"
+            # Flatten_Head on past tokens (num_patches tokens)
+            self.head_nf = self.chronos_output_dim * self.num_patches
+            self.flatten_head = Flatten_Head(
+                individual=individual,
+                n_vars=self.n_vars,
+                nf=self.head_nf,
+                target_window=self.pred_len,
+                head_dropout=head_dropout
+            )
 
-    def forward(self, x):
+    def forward(self, x, future_seq=None):
         """Forward pass.
 
         Args:
-            x: input sequence [Batch, seq_len, n_vars]
+            x:          past input sequence, (bs, seq_len, n_vars)
+            future_seq: ground-truth future sequence, (bs, pred_len, n_vars)
+                        only used in embed_type="future" during training.
+                        Ignored for "past" and "predict" modes.
 
         Returns:
-            output: [Batch, pred_len, n_vars]
+            output: (bs, pred_len, n_vars)
         """
-        # Chronos expects input in (B, C, T) format
-        # x: (bs, seq_len, nvars) -> (bs, nvars, seq_len)
-        x_perm = x.permute(0, 2, 1)
+        # Chronos expects (B, C, T)
+        x_perm = x.permute(0, 2, 1)  # (bs, nvars, seq_len)
 
-        if self.use_future_patch:
-            # Use model.encode() to get embeddings, then extract ONLY future tokens
-            chronos_model = self.chronos.model
+        if self.embed_type == 'predict':
+            # ---- "predict" mode: encode future tokens ----
             bs, nvars, seq_len = x_perm.shape
-
-            # Flatten bs*nvars to process all at once: (bs, nvars, seq_len) -> (bs*nvars, seq_len)
             x_flat = x_perm.reshape(-1, seq_len)  # (bs*nvars, seq_len)
 
-            # Batch encode all at once
-            encoder_out, loc_scale, _, _ = chronos_model.encode(
+            encoder_out, loc_scale, _, _ = self.chronos.model.encode(
                 context=x_flat.float().to(self.device),
                 num_output_patches=self.num_output_patches,
             )
-            # encoder_out.last_hidden_state: (bs*nvars, num_context + 1 + num_output, d_model)
-            # loc_scale: (2, bs*nvars) - tuple of (loc, scale) per series
-
-            # Extract ONLY the last num_output_patches (future tokens) for each
-            # Shape: (bs*nvars, num_output, d_model)
+            # last num_output_patches tokens
             future_embeds = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
-
-            # Reshape back to (bs, nvars, num_output, d_model)
             embeddings = future_embeds.reshape(bs, nvars, self.num_output_patches, self.chronos_output_dim)
-
-            # embeddings shape: (bs, nvars, num_output_patches, 768)
-            # Permute to match PatchwiseHead expected format: (bs, nvars, d_model, output_patch_num)
             embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_output_patches)
 
-            # Apply PatchwiseHead
-            # PatchwiseHead expects: (bs, nvars, d_model, output_patch_num)
             output = self.patchwise_head(embeddings_perm)  # (bs, nvars, pred_len)
 
-            # Denormalize: output is in normalized space, loc_scale is (loc, scale) each (bs*nvars,)
-            # Reshape loc_scale for broadcasting: loc (bs*nvars,) -> (bs, nvars)
-            loc = loc_scale[0].reshape(bs, nvars)  # (bs, nvars)
-            scale = loc_scale[1].reshape(bs, nvars)  # (bs, nvars)
-            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)  # (bs, nvars, pred_len)
-        else:
-            # Get Chronos2 embeddings using embed() method
-            # Returns: list of (n_variates, num_patches+2, 768) - one per batch item
-            # And loc_scales: list of (2, n_variates) - tuple of (loc, scale) per batch item
-            embeddings_list, loc_scales = self.chronos.embed(x_perm.cpu())
+            loc = loc_scale[0].reshape(bs, nvars)
+            scale = loc_scale[1].reshape(bs, nvars)
+            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)
 
-            # Stack embeddings: (bs, nvars, num_patches+2, 768)
+        elif self.embed_type == 'future':
+            # ---- "future" mode: always embed ground-truth future sequence ----
+            # future_seq: (bs, pred_len, nvars) → (bs, nvars, pred_len)
+            assert future_seq is not None, "embed_type='future' requires future_seq in forward()"
+            future_perm = future_seq.permute(0, 2, 1)
+            embeddings_list, loc_scales = self.chronos.embed(future_perm.cpu())
+
+            # Stack: (bs, nvars, num_tokens+2, 768); take first num_output_patches
             embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
+            assert embeddings.shape[2] >= self.num_output_patches, (
+                f"embed_type='future': chronos.embed() returned {embeddings.shape[2]} tokens "
+                f"but need {self.num_output_patches} (pred_len={self.pred_len}, patch_len={self.patch_len})"
+            )
+            embeddings = embeddings[:, :, :self.num_output_patches, :]  # (bs, nvars, num_output_patches, 768)
+            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_output_patches)
 
-            # Only take past tokens (excluding reg token and future token)
-            embeddings = embeddings[:, :, :self.num_patches, :]  # (bs, nvars, past_tokens, 768)
-
-            # embeddings shape: (bs, nvars, num_patches, 768)
-            # Permute to match Flatten_Head expected format: (bs, nvars, d_model, patch_num)
-            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_patches)
-
-            # Apply Flatten_Head
             output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
 
-            # Denormalize: stack loc_scales and apply inverse
-            # loc_scales: list of ( (nvars,1), (nvars,1) ) tuples - each is (loc, scale) with extra dim
-            # After stack: (bs, nvars, 1) - need to squeeze to (bs, nvars)
-            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
-            scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)  # (bs, nvars, 1)
-            loc = loc_scale_stacked.squeeze(-1)  # (bs, nvars) - mean
-            scale = scale_stacked.squeeze(-1)  # (bs, nvars) - std
-            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)  # (bs, nvars, pred_len)
+            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)
+            scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)
+            loc = loc_scale_stacked.squeeze(-1)
+            scale = scale_stacked.squeeze(-1)
+            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)
 
-        # Final permute: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
-        output = output.permute(0, 2, 1)
+        else:  # "past"
+            # ---- "past" mode: embed past tokens ----
+            embeddings_list, loc_scales = self.chronos.embed(x_perm.cpu())
 
-        return output
+            embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
+            embeddings = embeddings[:, :, :self.num_patches, :]  # (bs, nvars, num_patches, 768)
+            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_patches)
+
+            output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
+
+            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)
+            scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)
+            loc = loc_scale_stacked.squeeze(-1)
+            scale = scale_stacked.squeeze(-1)
+            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)
+
+        # (bs, nvars, pred_len) → (bs, pred_len, nvars)
+        return output.permute(0, 2, 1)

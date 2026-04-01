@@ -71,13 +71,13 @@ class Exp_Main(Exp_Basic):
             # Get components directly from Chronos2_head model
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
 
-            use_future = getattr(model, 'use_future_patch', 0)
-            if use_future:
+            embed_type = getattr(model, 'embed_type', 'past')
+            if embed_type == 'predict':
                 head_total = sum(p.numel() for p in model.patchwise_head.parameters())
                 head_name = 'PatchwiseHead'
             else:
                 head_total = sum(p.numel() for p in model.flatten_head.parameters())
-                head_name = 'Flatten_Head'
+                head_name = f'Flatten_Head ({"future tokens" if embed_type == "future" else "past tokens"})'
 
             all_total = sum(p.numel() for p in model.parameters())
             all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -85,7 +85,7 @@ class Exp_Main(Exp_Basic):
             print(f"\nModel Configuration:")
             print(f"  Model:           {model_name}")
             print(f"  Head type:       {head_name}")
-            print(f"  Use future patch: {use_future}")
+            print(f"  Embed type:      {embed_type}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
             print(f"Total parameters (excl. Chronos):    {all_total - chronos_total:,}")
@@ -205,9 +205,10 @@ class Exp_Main(Exp_Basic):
             ed = getattr(self.args, 'encoder_depth', 2)
             print(f"\n>>> Using PatchTST_TCR: lambda_temporal={lambda_t}, tau={tau}, encoder_depth={ed}")
         elif self.args.model == 'Chronos2_head':
-            use_future = getattr(self.args, 'use_future_patch', 0)
-            head_name = 'PatchwiseHead' if use_future else 'Flatten_Head'
-            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, use_future_patch={use_future}")
+            embed_type = getattr(self.args, 'chronos_embed_type', 'past')
+            head_map = {'past': 'Flatten_Head (past tokens)', 'predict': 'PatchwiseHead', 'future': 'Flatten_Head (future tokens)'}
+            head_name = head_map.get(embed_type, embed_type)
+            print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, embed_type={embed_type}")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
@@ -327,10 +328,13 @@ class Exp_Main(Exp_Basic):
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                            # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
-                            outputs = self.model(batch_x)
-                            if isinstance(outputs, tuple):
-                                outputs = outputs[0]
+                            if self.args.model == 'Chronos2_head' and getattr(self.args, 'chronos_embed_type', 'past') == 'future':
+                                future_seq = batch_y[:, -self.args.pred_len:, :]
+                                outputs = self.model(batch_x, future_seq=future_seq)
+                            else:
+                                outputs = self.model(batch_x)
+                                if isinstance(outputs, tuple):
+                                    outputs = outputs[0]
                         else:
                             if self.args.output_attention:
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -338,10 +342,13 @@ class Exp_Main(Exp_Basic):
                                 outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                        # PatchTST: returns only output; PatchTST_REPA: returns (output, zs)
-                        outputs = self.model(batch_x)
-                        if isinstance(outputs, tuple):
-                            outputs = outputs[0]
+                        if self.args.model == 'Chronos2_head' and getattr(self.args, 'chronos_embed_type', 'past') == 'future':
+                            future_seq = batch_y[:, -self.args.pred_len:, :]
+                            outputs = self.model(batch_x, future_seq=future_seq)
+                        else:
+                            outputs = self.model(batch_x)
+                            if isinstance(outputs, tuple):
+                                outputs = outputs[0]
                     else:
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
@@ -456,9 +463,14 @@ class Exp_Main(Exp_Basic):
                         loss_temporal_per_step.append(0.0)
                 else:
                     if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                        # Chronos2_head: simple forward, no batch_y_for_model needed
+                        # Chronos2_head: simple forward
                         if self.args.model == 'Chronos2_head':
-                            outputs = self.model(batch_x)
+                            embed_type = getattr(self.args, 'chronos_embed_type', 'past')
+                            if embed_type == 'future':
+                                future_seq = batch_y[:, -self.args.pred_len:, :]
+                                outputs = self.model(batch_x, future_seq=future_seq)
+                            else:
+                                outputs = self.model(batch_x)
                         else:
                             # Slice target to pred_len for feature extraction
                             batch_y_for_model = batch_y[:, -self.args.pred_len:, :]

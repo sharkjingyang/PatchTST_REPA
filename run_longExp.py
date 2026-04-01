@@ -82,8 +82,9 @@ if __name__ == '__main__':
                         help='Patch fusion MLP type: fusion_MLP (joint projection), split_MLP (separable projection), or none (no fusion, requires patch_num==output_patch_num)')
     parser.add_argument('--contrastive', type=int, default=None,
                         help='Enable contrastive learning loss (None=auto based on model, 0=disable, 1=enable)')
-    parser.add_argument('--use_future_patch', type=int, default=0,
-                        help='Chronos2_head: use future tokens for prediction (1) or past tokens (0)')
+    parser.add_argument('--chronos_embed_type', type=str, default='past',
+                        choices=['past', 'predict', 'future'],
+                        help='Chronos2_head embed mode: past=past tokens+Flatten_Head, predict=future tokens+PatchwiseHead, future=ground-truth future+Flatten_Head (teacher-forcing)')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')

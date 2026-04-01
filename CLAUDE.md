@@ -57,13 +57,14 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --patch_fusion_type none --contrastive_type patch_wise
 
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
-# use_future_patch=0: past tokens + Flatten_Head (pred_len=96: ~1.55M, pred_len=720: ~11.6M, scales linearly)
-# use_future_patch=1: future tokens only + PatchwiseHead (~314K trainable params, fixed regardless of pred_len)
+# --chronos_embed_type past:    past tokens + Flatten_Head (pred_len=96: ~1.55M, pred_len=720: ~11.6M)
+# --chronos_embed_type predict: future tokens + PatchwiseHead (~314K, fixed regardless of pred_len)
+# --chronos_embed_type future:  ground-truth future tokens + Flatten_Head (teacher-forcing; inference fallback=predict mode)
 python -u run_longExp.py --is_training 1 --model Chronos2_head --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --patch_len 16 --batch_size 128 --learning_rate 0.0001 \
-  --use_future_patch 0
+  --chronos_embed_type past
 ```
 
 # PatchTST_TCR (Temporal Contrastive Regularization, no external FM)
@@ -101,34 +102,46 @@ sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no tr
 
 Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainable prediction head. **All outputs are denormalized back to original scale** using InstanceNorm inverse (same as Chronos2's native forward pass).
 
-| Mode | Features | Head | Trainable Params |
-|------|----------|------|------------------|
-| `use_future_patch=0` | Past tokens (21 patches) | Flatten_Head | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), linear in pred_len |
-| `use_future_patch=1` | Future tokens only (6 patches) | PatchwiseHead | ~314K (fixed, independent of pred_len) |
+| embed_type | Features | Head | Trainable Params |
+|------------|----------|------|------------------|
+| `past`    | Past tokens (21 patches) | Flatten_Head | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), linear in pred_len |
+| `predict` | Future tokens only (6 patches) | PatchwiseHead | ~314K (fixed, independent of pred_len) |
+| `future`  | Ground-truth future tokens (6 patches, teacher-forcing) | Flatten_Head | ~4.7M (pred_len=96, fixed) |
 
-**Flow (use_future_patch=0)**:
+**Flow (embed_type="past")**:
 ```
 Input x: (bs, seq_len, nvars)
   ↓ Chronos2.embed(x) - frozen
 Feature: (bs, nvars, 21, 768)  [21 = seq_len/patch_len]
   ↓ permute(0,1,3,2): (bs, nvars, 768, 21)
-  ↓ Flatten_Head (individual=True)
-  ↓ flatten: (bs*nvars, 768*21)
-  ↓ linear: (bs*nvars, pred_len)
+  ↓ Flatten_Head → flatten: (bs*nvars, 768*21) → linear: (bs*nvars, pred_len)
   ↓ InstanceNorm.inverse (loc, scale from embed)
 Output: (bs, pred_len, nvars) - denormalized
 ```
 
-**Flow (use_future_patch=1)** - Like Chronos2's native prediction:
+**Flow (embed_type="predict")** - Like Chronos2's native prediction:
 ```
 Input x: (bs, seq_len, nvars)
   ↓ Chronos2.model.encode(x, num_output_patches) - frozen
 Feature: (bs, nvars, 28, 768)  [21 + 1 (REG) + 6 (future)]
   ↓ extract ONLY future tokens: hidden_states[:, -6:, :]
 Feature: (bs, nvars, 6, 768)
-  ↓ PatchwiseHead (per-patch prediction)
-  ↓ ResidualBlock per patch: d_model -> d_ff -> output_patch_size
+  ↓ PatchwiseHead → ResidualBlock per patch: d_model -> d_ff -> output_patch_size
   ↓ InstanceNorm.inverse (loc, scale from encode)
+Output: (bs, pred_len, nvars) - denormalized
+```
+
+**Flow (embed_type="future")** - Teacher-forcing with ground-truth future:
+```
+Training:
+  future_seq: (bs, pred_len, nvars) [ground truth]
+    ↓ Chronos2.embed(future_seq) - frozen
+  Feature: (bs, nvars, 6, 768)  [6 = pred_len/patch_len]
+    ↓ Flatten_Head → Linear(768*6, pred_len)
+    ↓ InstanceNorm.inverse (loc, scale from future embed)
+Inference (no ground truth):
+  ↓ Chronos2.model.encode(x, num_output_patches) - frozen (fallback=predict mode)
+  ↓ same Flatten_Head
 Output: (bs, pred_len, nvars) - denormalized
 ```
 
@@ -279,7 +292,7 @@ handle.remove()
 | `contrastive_type` | mean_pool / patch_wise | mean_pool |
 | `lambda_temporal` | TCR loss weight (PatchTST_TCR) | 0.0 (推荐 0.1) |
 | `tau` | TCR temperature (PatchTST_TCR) | 0.1 |
-| `use_future_patch` | Chronos2_head: 0=past tokens+Flatten, 1=future tokens+Patchwise | 0 |
+| `chronos_embed_type` | Chronos2_head: past / predict / future | past |
 
 ## Parameter Comparison
 
@@ -316,8 +329,9 @@ handle.remove()
 | 7 | 16 | 128 | 4 | 16 | 22 | 16,803 | 33,888 | ~51K |
 
 head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小，head 参数越少。
-| Chronos2_head (use_future_patch=0) | - | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), Flatten_Head |
-| Chronos2_head (use_future_patch=1) | - | ~314K (PatchwiseHead, fixed) |
+| Chronos2_head (embed_type=past)    | - | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), Flatten_Head |
+| Chronos2_head (embed_type=predict) | - | ~314K (PatchwiseHead, fixed) |
+| Chronos2_head (embed_type=future)  | - | ~4.7M (Flatten_Head on 6 future tokens, fixed) |
 
 `split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 三层）。
 
