@@ -189,6 +189,7 @@ class Exp_Main(Exp_Basic):
             'PatchTST': PatchTST,
             'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
             'PatchTST_REPA_Fusion': PatchTST,  # PatchTST with channel fusion branch
+            'PatchTST_TCR': PatchTST,  # PatchTST with Temporal Contrastive Regularization
             'Chronos2_head': Chronos2_head_module,  # Chronos2 (frozen) + Flatten_Head
         }
 
@@ -198,6 +199,11 @@ class Exp_Main(Exp_Basic):
             print(f"\n>>> Using PatchTST_REPA: contrastive={contrastive} + contrastive loss")
         elif self.args.model == 'PatchTST_REPA_Fusion':
             print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
+        elif self.args.model == 'PatchTST_TCR':
+            lambda_t = getattr(self.args, 'lambda_temporal', 0.0)
+            tau = getattr(self.args, 'tau', 0.1)
+            ed = getattr(self.args, 'encoder_depth', 2)
+            print(f"\n>>> Using PatchTST_TCR: lambda_temporal={lambda_t}, tau={tau}, encoder_depth={ed}")
         elif self.args.model == 'Chronos2_head':
             use_future = getattr(self.args, 'use_future_patch', 0)
             head_name = 'PatchwiseHead' if use_future else 'Flatten_Head'
