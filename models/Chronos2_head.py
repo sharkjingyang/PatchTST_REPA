@@ -65,6 +65,7 @@ class Model(nn.Module):
 
         individual = getattr(configs, 'individual', 0)
         head_dropout = getattr(configs, 'head_dropout', 0.0)
+        self.head_type = getattr(configs, 'head_type', 'flatten')
 
         if self.embed_type == 'predict':
             # PatchwiseHead: per-patch prediction (like Chronos2 native)
@@ -76,15 +77,25 @@ class Model(nn.Module):
                 dropout=head_dropout
             )
         elif self.embed_type == 'future':
-            # Flatten_Head on future tokens (num_output_patches tokens)
-            self.head_nf = self.chronos_output_dim * self.num_output_patches
-            self.flatten_head = Flatten_Head(
-                individual=individual,
-                n_vars=self.n_vars,
-                nf=self.head_nf,
-                target_window=self.pred_len,
-                head_dropout=head_dropout
-            )
+            if self.head_type == 'patch_wise':
+                # PatchwiseHead on ground-truth future tokens
+                self.patchwise_head = PatchwiseHead(
+                    n_vars=self.n_vars,
+                    d_model=self.chronos_output_dim,
+                    output_patch_num=self.num_output_patches,
+                    output_patch_size=self.patch_len,
+                    dropout=head_dropout
+                )
+            else:  # flatten
+                # Flatten_Head on future tokens (num_output_patches tokens)
+                self.head_nf = self.chronos_output_dim * self.num_output_patches
+                self.flatten_head = Flatten_Head(
+                    individual=individual,
+                    n_vars=self.n_vars,
+                    nf=self.head_nf,
+                    target_window=self.pred_len,
+                    head_dropout=head_dropout
+                )
         else:  # "past"
             # Flatten_Head on past tokens (num_patches tokens)
             self.head_nf = self.chronos_output_dim * self.num_patches
@@ -147,7 +158,10 @@ class Model(nn.Module):
             embeddings = embeddings[:, :, :self.num_output_patches, :]  # (bs, nvars, num_output_patches, 768)
             embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_output_patches)
 
-            output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
+            if self.head_type == 'patch_wise':
+                output = self.patchwise_head(embeddings_perm)  # (bs, nvars, pred_len)
+            else:
+                output = self.flatten_head(embeddings_perm)    # (bs, nvars, pred_len)
 
             loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)
             scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)

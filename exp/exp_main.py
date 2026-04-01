@@ -72,7 +72,8 @@ class Exp_Main(Exp_Basic):
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
 
             embed_type = getattr(model, 'embed_type', 'past')
-            if embed_type == 'predict':
+            head_type = getattr(model, 'head_type', 'flatten')
+            if embed_type == 'predict' or (embed_type == 'future' and head_type == 'patch_wise'):
                 head_total = sum(p.numel() for p in model.patchwise_head.parameters())
                 head_name = 'PatchwiseHead'
             else:
@@ -206,8 +207,13 @@ class Exp_Main(Exp_Basic):
             print(f"\n>>> Using PatchTST_TCR: lambda_temporal={lambda_t}, tau={tau}, encoder_depth={ed}")
         elif self.args.model == 'Chronos2_head':
             embed_type = getattr(self.args, 'chronos_embed_type', 'past')
-            head_map = {'past': 'Flatten_Head (past tokens)', 'predict': 'PatchwiseHead', 'future': 'Flatten_Head (future tokens)'}
-            head_name = head_map.get(embed_type, embed_type)
+            head_type = getattr(self.args, 'head_type', 'flatten')
+            if embed_type == 'predict' or (embed_type == 'future' and head_type == 'patch_wise'):
+                head_name = 'PatchwiseHead'
+            elif embed_type == 'future':
+                head_name = 'Flatten_Head (future tokens)'
+            else:
+                head_name = 'Flatten_Head (past tokens)'
             print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, embed_type={embed_type}")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
