@@ -23,6 +23,7 @@ e_layers=3
 # TCR hyperparameters
 lambda_temporal=0.1
 tau=0.1
+encoder_depth=2
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -51,5 +52,6 @@ python -u run_longExp.py \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --lambda_temporal $lambda_temporal \
   --tau $tau \
+  --encoder_depth $encoder_depth \
   --device $device \
-  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_temporal}_tau${tau}.log
+  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_temporal}_tau${tau}_ed${encoder_depth}.log
