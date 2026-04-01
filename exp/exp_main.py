@@ -514,9 +514,10 @@ class Exp_Main(Exp_Basic):
 
                     if hasattr(self.model, 'temporal_contrastive') and self.model.temporal_contrastive and zs_raw is not None:
                         lambda_temporal = getattr(self.args, 'lambda_temporal', 0.0)
-                        tau = getattr(self.args, 'tau', 0.1)
-                        temporal_loss = self._compute_temporal_contrastive_loss(zs_raw, tau=tau)
-                        loss = loss + lambda_temporal * temporal_loss
+                        if lambda_temporal > 0:
+                            tau = getattr(self.args, 'tau', 0.1)
+                            temporal_loss = self._compute_temporal_contrastive_loss(zs_raw, tau=tau)
+                            loss = loss + lambda_temporal * temporal_loss
 
                     train_loss.append(loss.item())
                     train_mse_loss.append(mse_loss.item())
@@ -629,10 +630,16 @@ class Exp_Main(Exp_Basic):
         axes[1].set_title('MSE Loss')
         axes[1].grid(True, alpha=0.3)
 
-        axes[2].plot(steps, loss_contrastive_per_step, 'r-', linewidth=0.5)
-        axes[2].set_xlabel('Steps')
-        axes[2].set_ylabel('Contrastive Loss')
-        axes[2].set_title('Contrastive Loss')
+        if self.args.model == 'PatchTST_TCR':
+            axes[2].plot(steps, loss_temporal_per_step, 'r-', linewidth=0.5)
+            axes[2].set_xlabel('Steps')
+            axes[2].set_ylabel('TCR Loss')
+            axes[2].set_title('TCR Loss')
+        else:
+            axes[2].plot(steps, loss_contrastive_per_step, 'r-', linewidth=0.5)
+            axes[2].set_xlabel('Steps')
+            axes[2].set_ylabel('Contrastive Loss')
+            axes[2].set_title('Contrastive Loss')
         axes[2].grid(True, alpha=0.3)
 
         plt.suptitle(f'Loss Curves - {setting}')

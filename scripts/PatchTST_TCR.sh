@@ -18,7 +18,7 @@ random_seed=2021
 pred_len=720
 d_model=16
 d_ff=128
-e_layers=4
+e_layers=3
 
 # TCR hyperparameters
 lambda_temporal=0.1
@@ -45,6 +45,7 @@ python -u run_longExp.py \
   --head_dropout 0 \
   --patch_len 16 \
   --stride 8 \
+  --padding_patch None \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
