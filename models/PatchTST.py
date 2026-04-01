@@ -362,12 +362,16 @@ class Model(nn.Module):
                             zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
                             zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)
                         elif self.feature_extractor == 'chronos' and self.chronos is not None:
-                            # 用 embed() 从 batch_x 提取 past tokens 用于对齐
-                            input_perm = x_original.permute(0, 2, 1)  # (bs, nvars, seq_len)
-                            num_past = x_original.shape[1] // 16  # seq_len // chronos patch_len=16
-                            embeddings_list, _ = self.chronos.embed(input_perm)
-                            embeddings = torch.stack(embeddings_list, dim=0).to(self.device)  # (bs, nvars, num_past+2, 768)
-                            zs_tilde = embeddings[:, :, :num_past, :]  # (bs, nvars, num_past, 768)
+                            if self.model.patch_fusion_type == 'none' and target is not None:
+                                # none 模式：对齐未来序列的 Chronos2 表示
+                                input_seq = target  # (bs, pred_len, nvars)
+                            else:
+                                input_seq = x_original  # (bs, seq_len, nvars)
+                            input_perm = input_seq.permute(0, 2, 1)
+                            num_tokens = input_seq.shape[1] // 16
+                            embeddings_list, _ = self.chronos.embed(input_perm.cpu())
+                            embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
+                            zs_tilde = embeddings[:, :, :num_tokens, :]  # (bs, nvars, num_tokens, 768)
 
                 # Return (output, zs, zs_tilde) for contrastive learning
                 return output, zs, zs_tilde

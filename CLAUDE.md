@@ -308,6 +308,20 @@ handle.remove()
 | revin_layer | 42 |
 | **TOTAL** | **1,168,911** |
 
+### PatchTST_REPA_Fusion (none, d_model=128, seq_len=336, pred_len=96, nvars=7)
+
+patch_len 自动推导 = 336//6 = 56，patch_num = output_patch_num = 6，对齐目标改为 chronos.embed(batch_y)（未来序列 6 tokens）。
+
+| Module | Params |
+|--------|-------:|
+| backbone (encoder_depth=2, patch_len=56) | 273,024 |
+| patch_fusion_mlp | 0 |
+| transformer_decoder (d_ff=d_model=128) | 99,584 |
+| alignment_mlp (`build_mlp(128→512→512→768)`) | 722,688 |
+| head (Flatten_Head, `Linear(768,96)`) | 73,824 |
+| revin_layer | 14 |
+| **TOTAL** | **~1,169,134** |
+
 ### 各模型规模对比 (d_model=128, seq_len=336, pred_len=96)
 
 | Model | patch_fusion_mlp | TOTAL |
@@ -317,7 +331,7 @@ handle.remove()
 | PatchTST_REPA | - | ~1.1M |
 | PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
 | PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
-| PatchTST_REPA_Fusion (none) | 0 | ~1.2M（patch_len 自动=56） |
+| PatchTST_REPA_Fusion (none) | 0 | ~1.17M（patch_len 自动=56，对齐未来序列） |
 
 ### PatchTST 参数规模 (seq_len=336, pred_len=96, e_layers=3, patch_len=16)
 
