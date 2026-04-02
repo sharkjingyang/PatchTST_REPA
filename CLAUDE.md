@@ -195,7 +195,7 @@ Total: Loss = MSE + lambda_temporal * L_temporal
 - PatchTST_TCR: `zs_raw` 直接在 d_model 空间做时序约束，无需外部 FM，无额外可学习参数
 
 ### Key Components
-- **`build_mlp(hidden_size, z_dim, projected_dim=512)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear→SiLU→Linear，用于所有 `alignment_mlp`
+- **`build_mlp(hidden_size, z_dim, projected_dim=256)`**: 统一的对齐 MLP，结构为 Linear→SiLU→Linear（两层），用于所有 `alignment_mlp`
 - **Patch_Fusion_MLP**: 联合投影 `d_model*patch_num → d_model*output_patch_num`（`fusion_MLP` 模式）
 - **`nn.Linear(patch_num, output_patch_num)`**: `split_MLP` 模式直接内联，仅投影时间维度，保留 `d_model` 不变，参数极少（~258）
 - **`none` 模式**: 无 fusion MLP，`patch_len` 自动推导为 `seq_len // output_patch_num`，使 patch_num 天然等于 output_patch_num；`patch_len/stride/padding_patch` 参数被忽略
@@ -204,7 +204,7 @@ Total: Loss = MSE + lambda_temporal * L_temporal
 - **PatchwiseHead**: Lightweight head using shared ResidualBlock per patch
 
 ### alignment_mlp 统一规范
-两种模式均使用 `build_mlp(d_model, d_extractor, projected_dim=512)`：
+两种模式均使用 `build_mlp(d_model, d_extractor, projected_dim=256)`：
 - `PatchTST_REPA`（无 fusion）：输入 `(bs*nvars*patch_num, d_model)` → 输出 `(bs*nvars*patch_num, d_extractor)`
 - `PatchTST_REPA_Fusion`：输入 `(bs*nvars*output_patch_num, d_model)` → 输出 `(bs*nvars*output_patch_num, d_extractor)`
 
@@ -303,10 +303,10 @@ handle.remove()
 | backbone (encoder) | 272,514 |
 | patch_fusion_mlp (`nn.Linear(42,6)`) | 258 |
 | transformer_decoder | 99,585 |
-| alignment_mlp (`build_mlp(128→512→512→768)`) | 722,688 |
+| alignment_mlp (`build_mlp(128→256→768)`) | 230,400 |
 | head (Flatten_Head) | 73,824 |
 | revin_layer | 42 |
-| **TOTAL** | **1,168,911** |
+| **TOTAL** | **676,623** |
 
 ### PatchTST_REPA_Fusion (none, d_model=128, seq_len=336, pred_len=96, nvars=7)
 
@@ -317,10 +317,10 @@ patch_len 自动推导 = 336//6 = 56，patch_num = output_patch_num = 6，对齐
 | backbone (encoder_depth=2, patch_len=56) | 273,024 |
 | patch_fusion_mlp | 0 |
 | transformer_decoder (d_ff=d_model=128) | 99,584 |
-| alignment_mlp (`build_mlp(128→512→512→768)`) | 722,688 |
+| alignment_mlp (`build_mlp(128→256→768)`) | 230,400 |
 | head (Flatten_Head, `Linear(768,96)`) | 73,824 |
 | revin_layer | 14 |
-| **TOTAL** | **~1,169,134** |
+| **TOTAL** | **676,846** |
 
 ### 各模型规模对比 (d_model=128, seq_len=336, pred_len=96)
 
@@ -328,10 +328,10 @@ patch_len 自动推导 = 336//6 = 56，patch_num = output_patch_num = 6，对齐
 |-------|-----------------|-------|
 | PatchTST | - | ~921K |
 | PatchTST_TCR | - | ~921K（与 PatchTST 完全一致，TCR 无额外参数） |
-| PatchTST_REPA | - | ~1.1M |
-| PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.8M |
-| PatchTST_REPA_Fusion (split_MLP) | 258 | ~1.2M |
-| PatchTST_REPA_Fusion (none) | 0 | ~1.17M（patch_len 自动=56，对齐未来序列） |
+| PatchTST_REPA | - | ~608K |
+| PatchTST_REPA_Fusion (fusion_MLP) | ~670K | ~1.3M |
+| PatchTST_REPA_Fusion (split_MLP) | 258 | ~677K |
+| PatchTST_REPA_Fusion (none) | 0 | ~677K（patch_len 自动=56，对齐未来序列） |
 
 ### PatchTST 参数规模 (seq_len=336, pred_len=96, e_layers=3, patch_len=16)
 
@@ -347,7 +347,7 @@ head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小
 | Chronos2_head (embed_type=predict) | - | ~314K (PatchwiseHead, fixed) |
 | Chronos2_head (embed_type=future)  | - | ~4.7M (Flatten_Head on 6 future tokens, fixed) |
 
-`split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 三层）。
+`split_MLP` 的 `patch_fusion_mlp` 仅 258 参数（vs `fusion_MLP` 的 ~670K），主要参数消耗在 `alignment_mlp`（build_mlp 两层，128→256→768，~230K）。
 
 ## Latent Space Quality Evaluation
 
