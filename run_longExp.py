@@ -61,6 +61,10 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_depth', type=int, default=2, help='which layer to extract intermediate output')
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
     parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
+    parser.add_argument('--lambda_t', type=float, default=0.5,
+                        help='PatchTST_future_align: teacher path loss weight (Loss②)')
+    parser.add_argument('--lambda_a', type=float, default=0.1,
+                        help='PatchTST_future_align: alignment loss weight (Loss③)')
     parser.add_argument('--contrastive_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'],
                         help='contrastive loss type: mean_pool (cosine after pooling), patch_wise_cos (per-patch cosine), patch_wise_mse (per-patch MSE)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')

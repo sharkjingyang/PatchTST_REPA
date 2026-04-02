@@ -2,6 +2,7 @@ from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
 import models.Chronos2_head as Chronos2_head_module
+import models.PatchTST_future_align as PatchTST_future_align_module
 from utils.tools import adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -65,6 +66,35 @@ class Exp_Main(Exp_Basic):
 
         model = self.model
         model_name = self.args.model
+
+        # PatchTST_future_align: backbone + Chronos2
+        if model_name == 'PatchTST_future_align':
+            chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
+            bb = model.backbone
+            encoder_total = sum(p.numel() for p in bb.backbone.parameters())
+            proj_down_total = sum(p.numel() for p in bb.proj_down.parameters())
+            head_total = sum(p.numel() for p in bb.head.parameters())
+            revin_total = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
+            all_total = sum(p.numel() for p in model.parameters())
+            all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+            print(f"\nModel Configuration:")
+            print(f"  Model:           PatchTST_future_align")
+            print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
+            print(f"  output_patch_num: {bb.output_patch_num}")
+
+            print(f"\nTotal parameters (all):              {all_total:,}")
+            print(f"Total parameters (excl. Chronos2):   {all_total - chronos_total:,}")
+            print(f"Trainable parameters:                {all_trainable:,}")
+
+            print(f"\nModule Parameters:")
+            print(f"  Encoder:                           {encoder_total:,}")
+            print(f"  proj_down (768→d_model):           {proj_down_total:,}")
+            print(f"  Flatten_Head:                      {head_total:,}")
+            print(f"  RevIN:                             {revin_total:,}")
+            print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
+            print("=" * 60)
+            return
 
         # Chronos2_head has direct model structure (no model.model nesting)
         if model_name == 'Chronos2_head':
@@ -191,6 +221,7 @@ class Exp_Main(Exp_Basic):
             'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
             'PatchTST_REPA_Fusion': PatchTST,  # PatchTST with channel fusion branch
             'Chronos2_head': Chronos2_head_module,  # Chronos2 (frozen) + Flatten_Head
+            'PatchTST_future_align': PatchTST_future_align_module,  # Joint distillation: Encoder + Chronos2 teacher
         }
 
         # Print model info based on model_name
@@ -209,6 +240,10 @@ class Exp_Main(Exp_Basic):
             else:
                 head_name = 'Flatten_Head (past tokens)'
             print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, embed_type={embed_type}")
+        elif self.args.model == 'PatchTST_future_align':
+            lambda_t = getattr(self.args, 'lambda_t', 0.5)
+            lambda_a = getattr(self.args, 'lambda_a', 0.1)
+            print(f"\n>>> Using PatchTST_future_align: joint distillation (λ_t={lambda_t}, λ_a={lambda_a})")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
@@ -422,7 +457,33 @@ class Exp_Main(Exp_Basic):
                         loss_mse_per_step.append(loss.item())  # Same as total in AMP mode
                         loss_contrastive_per_step.append(0.0)
                 else:
-                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
+                    if self.args.model == 'PatchTST_future_align':
+                        # ---- Joint Distillation Training ----
+                        future_seq = batch_y[:, -self.args.pred_len:, :]
+                        pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+
+                        f_dim = 0 if self.args.features == 'M' else -1
+                        batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        outputs = pred_student[:, :, f_dim:]
+
+                        lambda_t = getattr(self.args, 'lambda_t', 0.5)
+                        lambda_a = getattr(self.args, 'lambda_a', 0.1)
+
+                        mse_loss = criterion(outputs, batch_y_pred)
+                        loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
+                        loss_align = F.mse_loss(z_enc, z_teacher.detach())
+                        loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+
+                        # Track as mse / contrastive (align) for log consistency
+                        contrastive_loss = loss_align
+                        train_loss.append(loss.item())
+                        train_mse_loss.append(mse_loss.item())
+                        train_contrastive_loss.append(loss_align.item())
+                        loss_per_step.append(loss.item())
+                        loss_mse_per_step.append(mse_loss.item())
+                        loss_contrastive_per_step.append(loss_align.item())
+
+                    elif 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # Chronos2_head: simple forward
                         if self.args.model == 'Chronos2_head':
                             embed_type = getattr(self.args, 'chronos_embed_type', 'past')
@@ -456,42 +517,43 @@ class Exp_Main(Exp_Basic):
                         else:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark, batch_y)
 
-                    # Handle quantile head output
-                    head_type = getattr(self.args, 'head_type', 'flatten')
-                    num_quantiles = getattr(self.args, 'num_quantiles', 20)
+                    if self.args.model != 'PatchTST_future_align':
+                        # Handle quantile head output
+                        head_type = getattr(self.args, 'head_type', 'flatten')
+                        num_quantiles = getattr(self.args, 'num_quantiles', 20)
 
-                    # print(outputs.shape,batch_y.shape)
-                    f_dim = 0 if self.args.features == 'M' else -1
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:] if head_type != 'quantile' else outputs
-                    batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        # print(outputs.shape,batch_y.shape)
+                        f_dim = 0 if self.args.features == 'M' else -1
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:] if head_type != 'quantile' else outputs
+                        batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
-                    # Loss computation
-                    if head_type == 'quantile':
-                        # outputs: (bs, pred_len, nvars, num_quantiles)
-                        # QuantileLoss expects: pred (bs, nvars, num_quantiles, pred_len), target (bs, pred_len, nvars)
-                        # Permute outputs to match: (bs, nvars, num_quantiles, pred_len)
-                        outputs_for_quantile = outputs.permute(0, 2, 3, 1)  # (bs, nvars, num_quantiles, pred_len)
-                        # batch_y_pred: (bs, pred_len, nvars) already matches target shape
-                        mse_loss = criterion(outputs_for_quantile, batch_y_pred)
-                    else:
-                        mse_loss = criterion(outputs, batch_y_pred)
+                        # Loss computation
+                        if head_type == 'quantile':
+                            # outputs: (bs, pred_len, nvars, num_quantiles)
+                            # QuantileLoss expects: pred (bs, nvars, num_quantiles, pred_len), target (bs, pred_len, nvars)
+                            # Permute outputs to match: (bs, nvars, num_quantiles, pred_len)
+                            outputs_for_quantile = outputs.permute(0, 2, 3, 1)  # (bs, nvars, num_quantiles, pred_len)
+                            # batch_y_pred: (bs, pred_len, nvars) already matches target shape
+                            mse_loss = criterion(outputs_for_quantile, batch_y_pred)
+                        else:
+                            mse_loss = criterion(outputs, batch_y_pred)
 
-                    # Contrastive loss for feature alignment (only when using projector)
-                    contrastive_loss = torch.tensor(0.0, device=self.device)
-                    loss = mse_loss
+                        # Contrastive loss for feature alignment (only when using projector)
+                        contrastive_loss = torch.tensor(0.0, device=self.device)
+                        loss = mse_loss
 
-                    if hasattr(self.model, 'contrastive') and self.model.contrastive:
-                        contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
-                        loss = loss + self.args.lambda_contrastive * contrastive_loss
+                        if hasattr(self.model, 'contrastive') and self.model.contrastive:
+                            contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
+                            loss = loss + self.args.lambda_contrastive * contrastive_loss
 
-                    train_loss.append(loss.item())
-                    train_mse_loss.append(mse_loss.item())
-                    train_contrastive_loss.append(contrastive_loss.item())
+                        train_loss.append(loss.item())
+                        train_mse_loss.append(mse_loss.item())
+                        train_contrastive_loss.append(contrastive_loss.item())
 
-                    # Record loss per step
-                    loss_per_step.append(loss.item())
-                    loss_mse_per_step.append(mse_loss.item())
-                    loss_contrastive_per_step.append(contrastive_loss.item())
+                        # Record loss per step
+                        loss_per_step.append(loss.item())
+                        loss_mse_per_step.append(mse_loss.item())
+                        loss_contrastive_per_step.append(contrastive_loss.item())
 
                 if (i + 1) % 100 == 0:
                     # Only print detailed loss for PatchTST models with contrastive loss

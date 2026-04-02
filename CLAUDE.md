@@ -188,6 +188,18 @@ batch_x: (bs, seq_len, nvars)
 - `patch_wise`: PatchwiseHead，**仅 `PatchTST_REPA_Fusion` 和 `Chronos2_head` 支持**
 - `quantile`: Quantile_Head for probabilistic forecasting
 
+### PatchwiseHead 适用条件（重要观察）
+
+PatchwiseHead 对每个 output patch 独立预测，其成立前提是：**latent patch i 在语义上与目标序列第 i 段空间对齐**。
+
+| 场景 | PatchwiseHead 是否有效 | 原因 |
+|------|----------------------|------|
+| `Chronos2_head future` | **有效** | `Chronos.embed(x_future)` 的 patch i 直接编码未来第 i 段，局部独立假设成立 |
+| `Chronos2_head predict` | **有效** | model.encode 输出的 future tokens 同样按未来时序排列 |
+| `PatchTST_REPA_Fusion` | **效果差** | encoder 输出的是过去信息，TransformerDecoder 仅做自注意力（无 cross-attention），output patch i 不保证对应未来第 i 段 |
+
+**结论**：`Chronos2_head` 场景本质是从已知未来表征中 decode（easy），`PatchTST_REPA_Fusion` 是从过去预测未来（hard）。后者 Flatten_Head 更优，因为它将所有 patch 拼接后全局预测，允许 head 自己学到跨 patch 的混合来弥补局部对齐不足。
+
 ### PatchTST-FM-R1 (Zero-shot Baseline)
 
 IBM Research 发布的时序预测基础模型（arXiv:2602.06909，2026），不需要任何训练，直接零样本推理。
