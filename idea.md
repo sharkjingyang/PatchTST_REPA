@@ -263,3 +263,74 @@ python -u run_longExp.py --is_training 1 --model PatchTST ...
 - **双重约束**：`Loss = MSE + alpha * L_temporal + beta * L_alignment(Chronos)`，自对齐保证 latent 质量，外部对齐注入 FM 知识
 - **选择性对齐**：加 gating 机制，模型自动决定哪些 patch 需要对齐
 - **逐层对齐**：PatchTST 不同层对齐 Chronos 不同层
+
+---
+
+# Joint Distillation Training（联合蒸馏训练）
+
+## 动机
+
+直接用 `Chronos2.embed(future) → Flatten_Head` 能达到很低的 MSE（因为拿到了未来信息），但推理时没有未来序列。
+目标：训练一个 Encoder 从历史序列产生接近 `Chronos2(future)` 的表示，使得接同一个 Head 后仍能准确预测。
+
+### 核心问题
+
+PatchTST_REPA 的对齐让 contrastive loss 降到 -0.6，但 MSE 没有改善。原因分析：
+- alignment_mlp 把对齐发生在独立的投影空间（d_model → 768），Head 操作的 d_model 空间没有受益
+- Head 只在 Encoder 输出上训练，从未见过 Chronos2 风格的表示，即使对齐成功也无法利用
+
+## 架构设计
+
+```
+训练时，每个 batch 同时走两条路：
+
+Path A (Teacher):
+  x_future → Chronos2(frozen) → z_chron (bs, nvars, P, 768)
+                               → proj_down (768→d_model，可训练)
+                               → z_teacher (bs, nvars, P, d_model)
+                               → Head → pred_teacher
+
+Path B (Student):
+  x_past → Encoder (可训练) → z_enc (bs, nvars, P, d_model)
+                             → Head → pred_student
+
+Loss = MSE(pred_student, y)                           # Loss① 学生预测
+     + λ_t * MSE(pred_teacher, y)                     # Loss② 教师预测
+     + λ_a * MSE(z_enc, z_teacher.detach())           # Loss③ 对齐（d_model空间）
+
+推理时：只用 Path B，Chronos2 不参与
+```
+
+## 梯度流
+
+| 模块 | Loss① | Loss② | Loss③ |
+|---|---|---|---|
+| Chronos2 | ✗ frozen | ✗ frozen | ✗ frozen |
+| proj_down | ✗ | ✓ | ✗ (target detach) |
+| Head | ✓ | ✓ | ✗ |
+| Encoder | ✓ | ✗ | ✓ |
+
+关键：Loss③ 中 `z_teacher.detach()`，防止梯度倒流回 proj_down，保持 teacher target 稳定。
+
+## 与两阶段方案的对比
+
+| | 两阶段 | 联合训练 |
+|---|---|---|
+| Stage 顺序 | 先训 proj_down+Head，再训 Encoder | 三者同时训练 |
+| Head 对 Encoder 输出的适应性 | 无（Head 固定后 Encoder 追） | 有（Head 同时见过两种表示） |
+| 推理时对不完美对齐的鲁棒性 | 弱（Head 只见过 Chronos2 特征） | 强（Head 在两种分布上都训练） |
+| 实现复杂度 | 低 | 中 |
+
+## 验证步骤
+
+1. **先验证 Teacher 可行性**：单独训练 `Chronos2.embed(future) → proj_down → Head`，确认 MSE 接近直接使用 768 维的 Chronos2_head(future)
+2. **再做联合训练**：加入 Encoder + 三项 Loss
+3. **消融**：去掉 Loss② 或 Loss③，验证各项贡献
+
+## 超参数建议
+
+| 参数 | 推荐值 | 作用 |
+|---|---|---|
+| λ_t | 0.5~1.0 | Teacher path 权重，越大 proj_down+Head 越好 |
+| λ_a | 0.1~0.3 | 对齐强度，太大压制 Loss① |
+| proj_down | Linear(768→d_model) | 单层线性，信息瓶颈适中 |

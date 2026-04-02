@@ -85,6 +85,8 @@ if __name__ == '__main__':
     parser.add_argument('--chronos_embed_type', type=str, default='past',
                         choices=['past', 'predict', 'future'],
                         help='Chronos2_head embed mode: past=past tokens+Flatten_Head, predict=future tokens+PatchwiseHead, future=ground-truth future+Flatten_Head (teacher-forcing)')
+    parser.add_argument('--proj_down', type=int, default=0,
+                        help='Chronos2_head (future mode only): 1=add Linear(768→d_model) bottleneck before head')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')

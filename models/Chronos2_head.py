@@ -67,6 +67,15 @@ class Model(nn.Module):
         head_dropout = getattr(configs, 'head_dropout', 0.0)
         self.head_type = getattr(configs, 'head_type', 'flatten')
 
+        # proj_down: Linear(768 → d_model) bottleneck before head (only for embed_type='future')
+        self.proj_down = None
+        if getattr(configs, 'proj_down', 0) and self.embed_type == 'future':
+            d_model = configs.d_model
+            self.proj_down = nn.Linear(self.chronos_output_dim, d_model)
+            head_input_dim = d_model
+        else:
+            head_input_dim = self.chronos_output_dim
+
         if self.embed_type == 'predict':
             # PatchwiseHead: per-patch prediction (like Chronos2 native)
             self.patchwise_head = PatchwiseHead(
@@ -81,14 +90,13 @@ class Model(nn.Module):
                 # PatchwiseHead on ground-truth future tokens
                 self.patchwise_head = PatchwiseHead(
                     n_vars=self.n_vars,
-                    d_model=self.chronos_output_dim,
+                    d_model=head_input_dim,
                     output_patch_num=self.num_output_patches,
                     output_patch_size=self.patch_len,
                     dropout=head_dropout
                 )
             else:  # flatten
-                # Flatten_Head on future tokens (num_output_patches tokens)
-                self.head_nf = self.chronos_output_dim * self.num_output_patches
+                self.head_nf = head_input_dim * self.num_output_patches
                 self.flatten_head = Flatten_Head(
                     individual=individual,
                     n_vars=self.n_vars,
@@ -156,7 +164,11 @@ class Model(nn.Module):
                 f"but need {self.num_output_patches} (pred_len={self.pred_len}, patch_len={self.patch_len})"
             )
             embeddings = embeddings[:, :, :self.num_output_patches, :]  # (bs, nvars, num_output_patches, 768)
-            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_output_patches)
+
+            if self.proj_down is not None:
+                # proj_down: (bs, nvars, num_output_patches, 768) → (bs, nvars, num_output_patches, d_model)
+                embeddings = self.proj_down(embeddings)
+            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, d_model/768, num_output_patches)
 
             if self.head_type == 'patch_wise':
                 output = self.patchwise_head(embeddings_perm)  # (bs, nvars, pred_len)
