@@ -118,6 +118,7 @@ class PatchTST_backbone(nn.Module):
 
         # Backbone
         self.encoder_depth = encoder_depth
+        assert encoder_depth <= n_layers, f"encoder_depth ({encoder_depth}) must be <= e_layers ({n_layers})"
         # When use_patch_fusion=True, only need encoder_depth layers (extract zs from that layer)
         # No need for the remaining layers since we use Patch Fusion MLP + flatten head instead
         n_layers_backbone = encoder_depth if use_patch_fusion else n_layers
@@ -188,6 +189,7 @@ class PatchTST_backbone(nn.Module):
                 d_model=d_model,
                 n_heads=patch_fusion_n_heads,
                 d_layers=d_layers,
+                d_ff=d_ff,
                 dropout=dropout
             )
 
