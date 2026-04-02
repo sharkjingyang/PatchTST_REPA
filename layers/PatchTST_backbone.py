@@ -13,11 +13,9 @@ from layers.PatchTST_layers import *
 from layers.RevIN import RevIN
 
 
-def build_mlp(hidden_size, z_dim, projected_dim=512):
+def build_mlp(hidden_size, z_dim, projected_dim=256):
     return nn.Sequential(
         nn.Linear(hidden_size, projected_dim),
-        nn.SiLU(),
-        nn.Linear(projected_dim, projected_dim),
         nn.SiLU(),
         nn.Linear(projected_dim, z_dim),
     )
