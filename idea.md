@@ -334,3 +334,155 @@ Loss = MSE(pred_student, y)                           # Loss① 学生预测
 | λ_t | 0.5~1.0 | Teacher path 权重，越大 proj_down+Head 越好 |
 | λ_a | 0.1~0.3 | 对齐强度，太大压制 Loss① |
 | proj_down | Linear(768→d_model) | 单层线性，信息瓶颈适中 |
+
+---
+
+## 实现 Plan
+
+### 归一化策略（已确认）
+
+两条路都使用同一个 RevIN（基于 x_past 统计量），不使用 Chronos2 的 loc/scale：
+
+```
+Student: x_past → RevIN norm → Encoder → z_enc → Head → RevIN denorm → pred_student
+Teacher: x_future → Chronos2.embed(frozen) → z_chron
+         z_chron → proj_down → z_teacher → Head → RevIN denorm(x_past stats) → pred_teacher
+```
+
+Head 自己学会适应两种不同来源的表示，不需要担心归一化空间的差异。
+
+### Patch 自动推导
+
+output_patch_num = pred_len // 16（Chronos2 patch size 固定为 16）
+patch_len = seq_len // output_patch_num，使 patch_num == output_patch_num，支持 patch-wise 对齐
+
+| seq_len | pred_len | output_patch_num | patch_len |
+|---|---|---|---|
+| 336 | 96 | 6 | 56 |
+| 336 | 192 | 12 | 28 |
+| 336 | 336 | 21 | 16 |
+| 336 | 720 | 45 | 7 (336/45≈7.47，需 assert 整除) |
+
+### 文件变动
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `layers/PatchTST_JointDistil_backbone.py` | **新建** | 纯 backbone，无 Chronos2 |
+| `models/PatchTST_JointDistil.py` | **新建** | 含 Chronos2，组合两条 path |
+| `exp/exp_main.py` | 修改 | 新增 joint distil 训练分支 |
+| `run_longExp.py` | 修改 | 新增 `--lambda_t`, `--lambda_a` 参数 |
+| `scripts/JointDistil.sh` | **新建** | 训练脚本 |
+
+### 1. `layers/PatchTST_JointDistil_backbone.py`
+
+```python
+class PatchTST_JointDistil_backbone(nn.Module):
+    def __init__(self, c_in, context_window, target_window,
+                 n_layers, d_model, n_heads, d_ff,
+                 encoder_depth, dropout, head_dropout,
+                 individual, revin, affine, subtract_last, ...):
+
+        # output_patch_num = target_window // 16
+        # patch_len = context_window // output_patch_num  (auto)
+        # stride = patch_len (no overlap)
+        assert context_window % output_patch_num == 0
+
+        # RevIN
+        self.revin_layer = RevIN(c_in, affine, subtract_last)
+
+        # Patching + TSTiEncoder (encoder_depth layers)
+        self.backbone = TSTiEncoder(...)
+
+        # proj_down: 768 → d_model (for teacher path)
+        self.proj_down = nn.Linear(768, d_model)
+
+        # Shared Flatten_Head: d_model * output_patch_num → pred_len
+        self.head = Flatten_Head(individual, c_in,
+                                 d_model * output_patch_num,
+                                 target_window, head_dropout)
+
+    def forward_student(self, x):
+        # x: (bs, nvars, seq_len)
+        # 1. RevIN norm → 保存 stats
+        x = self.revin_layer(x.permute(0,2,1), 'norm').permute(0,2,1)
+        # 2. Patch + encode
+        # 3. z_enc: (bs, nvars, output_patch_num, d_model)
+        # 4. Head → pred (normalized space)
+        # 5. RevIN denorm
+        # return pred: (bs, pred_len, nvars), z_enc: (bs, nvars, output_patch_num, d_model)
+
+    def forward_teacher(self, z_chron):
+        # z_chron: (bs, nvars, output_patch_num, 768)
+        # 1. proj_down → z_teacher: (bs, nvars, output_patch_num, d_model)
+        # 2. Head → pred (normalized space)
+        # 3. RevIN denorm (复用 forward_student 保存的 stats)
+        # return pred: (bs, pred_len, nvars), z_teacher: (bs, nvars, output_patch_num, d_model)
+```
+
+**注意**：`forward_teacher` 复用 RevIN stats，因此必须在同一 forward pass 内先调 `forward_student`（stats 在 `forward_student` 中被 RevIN 记录）。
+
+### 2. `models/PatchTST_JointDistil.py`
+
+```python
+class Model(nn.Module):
+    def __init__(self, configs):
+        # Chronos2 (frozen)
+        self.chronos = Chronos2Pipeline.from_pretrained(...)
+        # backbone
+        self.backbone = PatchTST_JointDistil_backbone(...)
+
+    def forward(self, x_past, x_future=None):
+        x_perm = x_past.permute(0, 2, 1)  # (bs, nvars, seq_len)
+
+        # Student path (always)
+        pred_student, z_enc = self.backbone.forward_student(x_perm)
+
+        if x_future is not None:  # training
+            # Teacher path
+            future_perm = x_future.permute(0, 2, 1)  # (bs, nvars, pred_len)
+            embeddings_list, _ = self.chronos.embed(future_perm.cpu())
+            z_chron = torch.stack(embeddings_list, dim=0).to(self.device)
+            z_chron = z_chron[:, :, :self.num_output_patches, :]  # (bs, nvars, P, 768)
+
+            pred_teacher, z_teacher = self.backbone.forward_teacher(z_chron)
+            return pred_student, pred_teacher, z_enc, z_teacher
+
+        return pred_student  # inference
+```
+
+### 3. `exp/exp_main.py` — 训练分支
+
+```python
+# forward
+outputs, pred_teacher, z_enc, z_teacher = model(batch_x, batch_y[:, -pred_len:, :])
+
+# loss
+mse_loss = criterion(outputs, batch_y[:, -pred_len:, :])
+loss_teacher = criterion(pred_teacher, batch_y[:, -pred_len:, :])
+loss_align = F.mse_loss(z_enc, z_teacher.detach())
+
+loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+```
+
+推理时：`outputs = model(batch_x)`，只走 student path。
+
+### 4. 新增参数 (`run_longExp.py`)
+
+```python
+parser.add_argument('--lambda_t', type=float, default=0.5,
+                    help='JointDistil: teacher path loss weight')
+parser.add_argument('--lambda_a', type=float, default=0.1,
+                    help='JointDistil: alignment loss weight')
+```
+
+### 5. `scripts/JointDistil.sh`
+
+参考 `Chronos2_REPA_Fusion.sh`，model=PatchTST_JointDistil，加 `--lambda_t`, `--lambda_a`，不需要 `--patch_len/stride`（自动推导）。
+
+### 验证检查点
+
+1. forward_student 输出 shape: (bs, pred_len, nvars) ✓
+2. forward_teacher 输出 shape: (bs, pred_len, nvars) ✓
+3. z_enc shape == z_teacher shape: (bs, nvars, output_patch_num, d_model) ✓
+4. 推理时只走 student path，不需要 Chronos2 ✓
+5. 参数量：backbone (~270K) + proj_down (768*d_model) + head

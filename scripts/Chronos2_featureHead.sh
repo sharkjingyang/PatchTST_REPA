@@ -15,6 +15,7 @@ pred_len=96
 d_model=128
 chronos_embed_type=future
 proj_down=1
+head_type=flatten
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -32,8 +33,9 @@ python -u run_longExp.py \
   --patch_len 16 \
   --chronos_embed_type $chronos_embed_type \
   --proj_down $proj_down \
+  --head_type $head_type \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_et${chronos_embed_type}_pd${proj_down}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_et${chronos_embed_type}_pd${proj_down}_${head_type}.log
