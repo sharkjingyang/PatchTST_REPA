@@ -244,47 +244,35 @@ class Exp_Main(Exp_Basic):
     def _compute_contrastive_loss(self, zs_project, zs_tilde):
         """
         Compute contrastive loss between projected features and TiViT/Mantis/Chronos features.
-        对每个 nvar 单独计算 cosine similarity，然后求和。
 
         Args:
-            zs_project: (bs, nvars, patch_num, d_model) or (bs, nvars, patch_num, projector_dim) - PatchTST projected features
+            zs_project: (bs, nvars, patch_num, d_proj) - PatchTST projected features
             zs_tilde: (bs, nvars, d_vit) for TiViT/Mantis, or (bs, nvars, num_patches, d_vit) for Chronos
-            contractive_type: 'mean_pool' or 'patch_wise'
 
         Returns:
             loss: scalar contrastive loss
         """
         contractive_type = getattr(self.args, 'contrastive_type', 'mean_pool')
 
-        # For Chronos with patch_wise: patch_num is already consistent (interpolated in data prep)
-        # For others or mean_pool: use mean pooling
-        if zs_tilde.dim() == 4 and contractive_type == 'patch_wise':
-            # patch_num is already consistent (interpolated to seq_len in data prep)
-            # Normalize features
+        if zs_tilde.dim() == 4 and contractive_type == 'patch_wise_mse':
+            # patch_wise_mse: MSE loss per patch per nvar
+            loss = F.mse_loss(zs_project, zs_tilde.detach())
+
+        elif zs_tilde.dim() == 4 and contractive_type == 'patch_wise_cos':
+            # patch_wise_cos: cosine similarity per patch per nvar
             zs_project = F.normalize(zs_project, dim=-1)
             zs_tilde = F.normalize(zs_tilde, dim=-1)
-
-            # Compute cosine similarity per patch per nvar
-            # Shape: (bs, nvars, patch_num)
-            similarity = (zs_project * zs_tilde).sum(dim=-1)
-
-            # Sum over all (batch_size * nvars * patch_num), then normalize
+            similarity = (zs_project * zs_tilde).sum(dim=-1)  # (bs, nvars, patch_num)
             loss = -similarity.sum() / similarity.numel()
+
         else:
-            # mean_pool: use mean pooling over patch dimension
+            # mean_pool: mean pooling over patch dimension, then cosine similarity
             zs_project = zs_project.mean(dim=2)  # -> (bs, nvars, d)
             if zs_tilde.dim() == 4:
                 zs_tilde = zs_tilde.mean(dim=2)  # -> (bs, nvars, d)
-
-            # Normalize features
             zs_project = F.normalize(zs_project, dim=-1)
             zs_tilde = F.normalize(zs_tilde, dim=-1)
-
-            # Compute cosine similarity per nvar (each nvar separately)
-            # Shape: (bs, nvars)
-            similarity = (zs_project * zs_tilde).sum(dim=-1)
-
-            # Sum over all (batch_size * nvars), then normalize by total count
+            similarity = (zs_project * zs_tilde).sum(dim=-1)  # (bs, nvars)
             loss = -similarity.sum() / similarity.numel()
 
         return loss

@@ -21,6 +21,10 @@ def build_mlp(hidden_size, z_dim, projected_dim=256):
     )
 
 
+def build_linear(hidden_size, z_dim):
+    return nn.Linear(hidden_size, z_dim)
+
+
 class Patch_Fusion_MLP(nn.Module):
     """将 (B, nvars, d_model, input_patch_num) 投影到 (B, nvars, d_model, output_patch_num)
     直接投影: d_model * input_patch_num → d_model * output_patch_num（无 hidden 层）
@@ -148,7 +152,7 @@ class PatchTST_backbone(nn.Module):
         self.alignment_mlp_dim = d_extractor
         self.alignment_mlp = None
         if self.contrastive and not self.use_patch_fusion:
-            self.alignment_mlp = build_mlp(d_model, d_extractor)
+            self.alignment_mlp = build_linear(d_model, d_extractor)
 
         # Patch Fusion components (only when use_patch_fusion=True)
         self.patch_fusion_mlp = None
@@ -187,9 +191,9 @@ class PatchTST_backbone(nn.Module):
                 dropout=dropout
             )
 
-            # Alignment MLP: d_model → d_extractor (用于对比学习，contrastive=0 时跳过)
+            # Alignment Linear: d_model → d_extractor (用于对比学习，contrastive=0 时跳过)
             if self.contrastive:
-                self.alignment_mlp = build_mlp(d_model, d_extractor)
+                self.alignment_mlp = build_linear(d_model, d_extractor)
 
             # Head for Patch Fusion branch
             if head_type == 'patch_wise':

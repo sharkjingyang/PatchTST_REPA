@@ -22,7 +22,7 @@ lr=0.0001
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
 contrastive=1
-contrastive_type='patch_wise'
+contrastive_type='patch_wise_cos'
 head_type='flatten'
 
 python -u run_longExp.py \

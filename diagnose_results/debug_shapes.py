@@ -40,7 +40,7 @@ parser.add_argument('--projector_dim', type=int, default=768)
 parser.add_argument('--chronos_pretrained', type=str, default='./Chronos2')
 parser.add_argument('--head_type', type=str, default='quantile', choices=['flatten', 'quantile'])  # Chronos2.sh: head_type=quantile
 parser.add_argument('--num_quantiles', type=int, default=20)
-parser.add_argument('--contrastive_type', type=str, default='patch_wise', choices=['mean_pool', 'patch_wise'])
+parser.add_argument('--contrastive_type', type=str, default='patch_wise_cos', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'])
 parser.add_argument('--contrastive', type=int, default=1)  # Enable contrastive loss for PatchTST_REPA
 parser.add_argument('--lambda_contrastive', type=float, default=0.5)
 
@@ -162,7 +162,7 @@ print("=" * 60)
 
 # Interpolate batch_y to seq_len for Chronos patch_wise (only for PatchTST_REPA, not Fusion)
 # PatchTST_REPA_Fusion uses Channel Fusion MLP which handles patch_num conversion automatically
-if args.feature_extractor == 'chronos' and args.contrastive_type == 'patch_wise' and args.model != 'PatchTST_REPA_Fusion':
+if args.feature_extractor == 'chronos' and args.contrastive_type in ('patch_wise_cos', 'patch_wise_mse') and args.model != 'PatchTST_REPA_Fusion':
     batch_y_for_model = batch_y[:, -args.pred_len:, :]  # (bs, pred_len, nvars)
     batch_y_interp = F.interpolate(
         batch_y_for_model.permute(0, 2, 1),  # (bs, nvars, pred_len)
