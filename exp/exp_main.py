@@ -460,20 +460,29 @@ class Exp_Main(Exp_Basic):
                 else:
                     if self.args.model == 'PatchTST_future_align':
                         # ---- Joint Distillation Training ----
-                        future_seq = batch_y[:, -self.args.pred_len:, :]
-                        pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
-
                         f_dim = 0 if self.args.features == 'M' else -1
                         batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                        outputs = pred_student[:, :, f_dim:]
 
                         lambda_t = getattr(self.args, 'lambda_t', 0.5)
-                        lambda_a = getattr(self.args, 'lambda_a', 0.1)
+                        lambda_a = getattr(self.args, 'lambda_a', 0.5)
+                        use_teacher = (lambda_t > 0 or lambda_a > 0)
 
-                        mse_loss = criterion(outputs, batch_y_pred)
-                        loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                        loss_align = F.mse_loss(z_enc, z_teacher.detach())
-                        loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+                        if use_teacher:
+                            future_seq = batch_y[:, -self.args.pred_len:, :]
+                            pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+                            outputs = pred_student[:, :, f_dim:]
+                            mse_loss = criterion(outputs, batch_y_pred)
+                            loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
+                            loss_align = F.mse_loss(z_enc, z_teacher.detach())
+                            loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+                        else:
+                            # Ablation: student only, no teacher path
+                            pred_student = self.model(batch_x)
+                            outputs = pred_student[:, :, f_dim:]
+                            mse_loss = criterion(outputs, batch_y_pred)
+                            loss = mse_loss
+                            loss_teacher = torch.tensor(0.0)
+                            loss_align = torch.tensor(0.0)
 
                         train_loss.append(loss.item())
                         train_mse_loss.append(mse_loss.item())
