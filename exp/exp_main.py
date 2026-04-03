@@ -74,6 +74,7 @@ class Exp_Main(Exp_Basic):
             encoder_total = sum(p.numel() for p in bb.backbone.parameters())
             proj_down_total = sum(p.numel() for p in bb.proj_down.parameters())
             head_total = sum(p.numel() for p in bb.head.parameters())
+            teacher_head_total = sum(p.numel() for p in bb.teacher_head.parameters())
             revin_total = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
             all_total = sum(p.numel() for p in model.parameters())
             all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -90,7 +91,8 @@ class Exp_Main(Exp_Basic):
             print(f"\nModule Parameters:")
             print(f"  Encoder:                           {encoder_total:,}")
             print(f"  proj_down (768→d_model):           {proj_down_total:,}")
-            print(f"  Flatten_Head:                      {head_total:,}")
+            print(f"  Student Flatten_Head:              {head_total:,}")
+            print(f"  Teacher Flatten_Head:              {teacher_head_total:,}")
             print(f"  RevIN:                             {revin_total:,}")
             print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
             print("=" * 60)

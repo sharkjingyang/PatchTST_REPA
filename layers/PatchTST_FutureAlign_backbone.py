@@ -84,9 +84,19 @@ class PatchTST_FutureAlign_backbone(nn.Module):
         # proj_down: Chronos2 dim (768) → d_model (teacher path, trainable)
         self.proj_down = nn.Linear(768, d_model)
 
-        # Shared Flatten_Head: (d_model * patch_num) → pred_len
+        # Student Flatten_Head: (d_model * patch_num) → pred_len
         head_nf = d_model * patch_num
         self.head = Flatten_Head(
+            individual=individual,
+            n_vars=c_in,
+            nf=head_nf,
+            target_window=target_window,
+            head_dropout=head_dropout
+        )
+
+        # Teacher Flatten_Head: independent head for teacher path
+        # Separate from student head to avoid gradient conflict
+        self.teacher_head = Flatten_Head(
             individual=individual,
             n_vars=c_in,
             nf=head_nf,
@@ -152,8 +162,8 @@ class PatchTST_FutureAlign_backbone(nn.Module):
         # Reshape for Flatten_Head: (bs, nvars, d_model, P)
         z_perm = z_teacher.permute(0, 1, 3, 2)
 
-        # Head (shared with student)
-        pred = self.head(z_perm)  # (bs, nvars, pred_len)
+        # Teacher head (independent from student head)
+        pred = self.teacher_head(z_perm)  # (bs, nvars, pred_len)
 
         # RevIN denorm (reuses stats from forward_student)
         if self.revin:
