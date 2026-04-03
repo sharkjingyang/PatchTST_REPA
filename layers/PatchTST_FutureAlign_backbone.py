@@ -4,7 +4,7 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 
-from layers.PatchTST_backbone import TSTiEncoder, Flatten_Head
+from layers.PatchTST_backbone import TSTiEncoder, Flatten_Head, PatchwiseHead
 from layers.RevIN import RevIN
 
 
@@ -12,9 +12,11 @@ class PatchTST_FutureAlign_backbone(nn.Module):
     """Backbone for PatchTST_future_align.
 
     Architecture:
-        - Student path: x_past → RevIN → patch → TSTiEncoder → Flatten_Head → RevIN denorm
-        - Teacher path: z_chron (from Chronos2) → proj_down → Flatten_Head → RevIN denorm
+        - Student path: x_past → RevIN → patch → TSTiEncoder → Head → RevIN denorm
+        - Teacher path: z_chron (from Chronos2) → proj_down → Head → RevIN denorm
           (reuses RevIN stats stored by forward_student)
+        - head_type: 'flatten' (Flatten_Head) or 'patch_wise' (PatchwiseHead)
+          Both student and teacher use the same head type.
 
     Patch auto-derivation:
         output_patch_num = pred_len // 16  (Chronos2 patch_size = 16)
@@ -35,6 +37,7 @@ class PatchTST_FutureAlign_backbone(nn.Module):
                  learn_pe: bool = True, head_dropout: float = 0.,
                  individual: bool = False, revin: bool = True,
                  affine: bool = True, subtract_last: bool = False,
+                 head_type: str = 'flatten',
                  max_seq_len: int = 1024, verbose: bool = False, **kwargs):
         super().__init__()
 
@@ -84,25 +87,29 @@ class PatchTST_FutureAlign_backbone(nn.Module):
         # proj_down: Chronos2 dim (768) → d_model (teacher path, trainable)
         self.proj_down = nn.Linear(768, d_model)
 
-        # Student Flatten_Head: (d_model * patch_num) → pred_len
-        head_nf = d_model * patch_num
-        self.head = Flatten_Head(
-            individual=individual,
-            n_vars=c_in,
-            nf=head_nf,
-            target_window=target_window,
-            head_dropout=head_dropout
-        )
+        self.head_type = head_type
 
-        # Teacher Flatten_Head: independent head for teacher path
-        # Separate from student head to avoid gradient conflict
-        self.teacher_head = Flatten_Head(
-            individual=individual,
-            n_vars=c_in,
-            nf=head_nf,
-            target_window=target_window,
-            head_dropout=head_dropout
-        )
+        def _build_head():
+            if head_type == 'patch_wise':
+                return PatchwiseHead(
+                    n_vars=c_in,
+                    d_model=d_model,
+                    output_patch_num=patch_num,
+                    output_patch_size=16,
+                    dropout=head_dropout
+                )
+            else:  # flatten
+                return Flatten_Head(
+                    individual=individual,
+                    n_vars=c_in,
+                    nf=d_model * patch_num,
+                    target_window=target_window,
+                    head_dropout=head_dropout
+                )
+
+        # Student and teacher use the same head type (independent weights)
+        self.head = _build_head()
+        self.teacher_head = _build_head()
 
     # ------------------------------------------------------------------
     # Student path

@@ -81,6 +81,7 @@ class Exp_Main(Exp_Basic):
 
             print(f"\nModel Configuration:")
             print(f"  Model:           PatchTST_future_align")
+            print(f"  head_type:        {bb.head_type}")
             print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
             print(f"  output_patch_num: {bb.output_patch_num}")
 

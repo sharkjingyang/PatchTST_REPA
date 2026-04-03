@@ -73,6 +73,7 @@ class Model(nn.Module):
             revin=getattr(configs, 'revin', 1),
             affine=getattr(configs, 'affine', 0),
             subtract_last=getattr(configs, 'subtract_last', 0),
+            head_type=getattr(configs, 'head_type', 'flatten'),
         )
 
     def forward(self, x_past, x_future=None):
