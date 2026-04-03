@@ -473,17 +473,23 @@ class Exp_Main(Exp_Basic):
 
                         if use_teacher:
                             future_seq = batch_y[:, -self.args.pred_len:, :]
-                            pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
-                            outputs = pred_student[:, :, f_dim:]
-                            mse_loss = criterion(outputs, batch_y_pred)
-                            loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                            loss_align = F.mse_loss(z_enc, z_teacher.detach())
 
                             if epoch < align_warmup:
-                                # Phase 1: teacher warmup only, no alignment
-                                loss = mse_loss + lambda_t * loss_teacher
+                                # Phase 1: teacher only — student encoder frozen, no MSE, no alignment
+                                # Encoder doesn't train here so alignment can act as regularizer from phase 2 start
+                                pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+                                outputs = pred_student[:, :, f_dim:]
+                                mse_loss = torch.tensor(0.0, device=self.device)
+                                loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
+                                loss_align = F.mse_loss(z_enc, z_teacher.detach())
+                                loss = lambda_t * loss_teacher
                             else:
-                                # Phase 2: smaller lambda_t (slow teacher) + alignment
+                                # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
+                                pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+                                outputs = pred_student[:, :, f_dim:]
+                                mse_loss = criterion(outputs, batch_y_pred)
+                                loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
+                                loss_align = F.mse_loss(z_enc, z_teacher.detach())
                                 loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
