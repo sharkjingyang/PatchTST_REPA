@@ -22,6 +22,7 @@ lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
 lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
 lambda_a=0.5        # Phase 2: alignment loss weight
 align_warmup=5      # epochs of teacher-only warmup before alignment starts
+head_type=flatten   # flatten or patch_wise
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -49,5 +50,6 @@ python -u run_longExp.py \
   --lambda_t2 $lambda_t2 \
   --lambda_a $lambda_a \
   --align_warmup_epochs $align_warmup \
+  --head_type $head_type \
   --device $device \
   >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_t}_la${lambda_a}.log
