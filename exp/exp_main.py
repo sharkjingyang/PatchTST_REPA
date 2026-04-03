@@ -413,6 +413,7 @@ class Exp_Main(Exp_Basic):
             iter_count = 0
             train_loss = []
             train_mse_loss = []
+            train_teacher_loss = []
             train_contrastive_loss = []
 
             self.model.train()
@@ -474,10 +475,9 @@ class Exp_Main(Exp_Basic):
                         loss_align = F.mse_loss(z_enc, z_teacher.detach())
                         loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
 
-                        # Track as mse / contrastive (align) for log consistency
-                        contrastive_loss = loss_align
                         train_loss.append(loss.item())
                         train_mse_loss.append(mse_loss.item())
+                        train_teacher_loss.append(loss_teacher.item())
                         train_contrastive_loss.append(loss_align.item())
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(mse_loss.item())
@@ -556,12 +556,6 @@ class Exp_Main(Exp_Basic):
                         loss_contrastive_per_step.append(contrastive_loss.item())
 
                 if (i + 1) % 100 == 0:
-                    # Only print detailed loss for PatchTST models with contrastive loss
-                    if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
-                        print("\titers: {0}, epoch: {1} | loss: {2:.7f} | mse: {3:.7f} | contrastive: {4:.7f}".format(
-                            i + 1, epoch + 1, loss.item(), mse_loss.item(), contrastive_loss.item()))
-                    else:
-                        print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
                     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
                     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
@@ -583,6 +577,7 @@ class Exp_Main(Exp_Basic):
             cost_time = time.time() - epoch_time
             train_loss = np.average(train_loss)
             train_mse_loss = np.average(train_mse_loss)
+            train_teacher_loss = np.average(train_teacher_loss) if train_teacher_loss else 0.0
             train_contrastive_loss = np.average(train_contrastive_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
@@ -597,10 +592,15 @@ class Exp_Main(Exp_Basic):
             # Get current learning rate
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
 
-            # Format: *** at the end if best model updated
             best_suffix = ' ***' if is_best_update else ''
-            print("Epoch: {} | cost time: {:.3f} | lr: {:.4e} | Steps: {} | Train Loss: {:.7f} | Train MSE: {:.7f} | Train Contrastive: {:.7f} | Vali Loss: {:.7f} | Test Loss: {:.7f}{}".format(
-                epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, train_contrastive_loss, vali_loss, test_loss, best_suffix))
+            if self.args.model == 'PatchTST_future_align':
+                extra_str = " | Teacher: {:.5f} | Align: {:.5f}".format(train_teacher_loss, train_contrastive_loss)
+            elif train_contrastive_loss > 1e-8:
+                extra_str = " | Align: {:.5f}".format(train_contrastive_loss)
+            else:
+                extra_str = ""
+            print("Epoch: {} | cost time: {:.3f} | lr: {:.2e} | Steps: {} | Train Loss: {:.5f} | MSE  Train: {:.5f}  Vali: {:.5f}  Test: {:.5f}{}{}".format(
+                epoch + 1, cost_time, current_lr, train_steps, train_loss, train_mse_loss, vali_loss, test_loss, extra_str, best_suffix))
 
             # Early stopping check
             if vali_loss >= best_val_loss:

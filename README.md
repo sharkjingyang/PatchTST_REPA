@@ -73,8 +73,8 @@ sh ./scripts/PatchTST.sh               # Baseline
 sh ./scripts/mantis.sh                 # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh               # PatchTST_REPA + Chronos2 (patch_wise_cos)
 sh ./scripts/Chronos2_REPA_Fusion.sh   # PatchTST_REPA_Fusion + Chronos2 (none mode)
-sh ./scripts/FutureAlign.sh            # PatchTST_future_align (joint distillation)
-sh ./scripts/Chronos2_featureHead.sh   # Chronos2_head (future + proj_down)
+sh ./scripts/Chronos2_FutureAlign.sh   # PatchTST_future_align (joint distillation)
+sh ./scripts/Chronos2_FeatureHead.sh   # Chronos2_head (future + proj_down)
 sh ./scripts/Chronos2_zeroshot.sh      # Chronos2 direct inference (no training)
 sh ./scripts/PatchTST_FM_zeroshot.sh   # PatchTST-FM-R1 zero-shot inference
 ```
@@ -172,8 +172,8 @@ PatchTST_REPA/
 │   ├── PatchTST.sh
 │   ├── Chronos2.sh
 │   ├── Chronos2_REPA_Fusion.sh
-│   ├── FutureAlign.sh
-│   ├── Chronos2_featureHead.sh
+│   ├── Chronos2_FutureAlign.sh
+│   ├── Chronos2_FeatureHead.sh
 │   ├── Chronos2_zeroshot.sh
 │   ├── PatchTST_FM_zeroshot.sh
 │   └── mantis.sh

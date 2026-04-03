@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head).
+Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head). Also includes **PatchTST_future_align** (joint distillation with Chronos2 teacher).
 
 ## Quick Start
 
@@ -57,6 +57,16 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data cus
   --feature_extractor chronos --lambda_contrastive 0.1 \
   --patch_fusion_type none --contrastive_type patch_wise_cos
 
+# PatchTST_future_align (joint distillation: student encoder + Chronos2 future teacher)
+# patch_len 自动推导，无需手动指定；dropout 与 REPA_Fusion 保持一致
+python -u run_longExp.py --is_training 1 --model PatchTST_future_align --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --dropout 0.3 --fc_dropout 0.3 --head_dropout 0.0 \
+  --batch_size 128 --learning_rate 0.0001 \
+  --lambda_t 0.5 --lambda_a 0.5
+
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
 # --chronos_embed_type past:    past tokens + Flatten_Head (pred_len=96: ~172K with proj_down)
 # --chronos_embed_type predict: future tokens + PatchwiseHead (~314K, fixed regardless of pred_len)
@@ -74,19 +84,21 @@ Or use shell scripts:
 sh ./scripts/PatchTST.sh              # Baseline
 sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise_cos)
-sh ./scripts/Chronos2_REPA_Fusion.sh # PatchTST_REPA_Fusion + Chronos (none mode)
-sh ./scripts/Chronos2_featureHead.sh # Chronos2_head (future + proj_down)
+sh ./scripts/Chronos2_REPA_Fusion.sh  # PatchTST_REPA_Fusion + Chronos (none mode)
+sh ./scripts/Chronos2_FutureAlign.sh  # PatchTST_future_align (joint distillation)
+sh ./scripts/Chronos2_FeatureHead.sh  # Chronos2_head (future + proj_down)
 sh ./scripts/Chronos2_zeroshot.sh    # Chronos2 direct inference (no training)
 sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no training)
 ```
 
 ## Architecture
 
-### Four Models
+### Five Models
 1. `PatchTST` - Original PatchTST (baseline)
 2. `PatchTST_REPA` - PatchTST + Linear Projector + contrastive loss (外部 FM 对齐)
 3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch + contrastive loss
-4. `Chronos2_head` - Chronos2 (frozen) + prediction head
+4. `PatchTST_future_align` - Joint distillation: student encoder + Chronos2 future teacher
+5. `Chronos2_head` - Chronos2 (frozen) + prediction head
 
 ### Chronos2_head Architecture
 
@@ -249,7 +261,7 @@ handle.remove()
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / Chronos2_head | - |
+| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / PatchTST_future_align / Chronos2_head | - |
 | `patch_fusion_type` | fusion_MLP (joint) / split_MLP (separable) / none (auto patch_len) | fusion_MLP |
 | `contrastive` | Enable contrastive learning loss (1/0) | auto |
 | `feature_extractor` | tivit / mantis / chronos | mantis |
@@ -258,6 +270,8 @@ handle.remove()
 | `contrastive_type` | mean_pool / patch_wise_cos / patch_wise_mse | mean_pool |
 | `chronos_embed_type` | Chronos2_head: past / predict / future | past |
 | `proj_down` | Chronos2_head (future mode): 1=add Linear(768→d_model) before head | 0 |
+| `lambda_t` | future_align: 教师路径预测损失权重 (Loss②) | 0.5 |
+| `lambda_a` | future_align: 对齐损失权重 (Loss③) | 0.5 |
 
 ## Parameter Comparison
 

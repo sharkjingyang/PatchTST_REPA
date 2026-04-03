@@ -19,7 +19,7 @@ d_ff=256
 
 # Joint distillation hyperparameters
 lambda_t=0.5   # teacher path loss weight (Loss②)
-lambda_a=0.1   # alignment loss weight   (Loss③)
+lambda_a=0.5   # alignment loss weight   (Loss③)
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -37,7 +37,8 @@ python -u run_longExp.py \
   --n_heads $n_heads \
   --d_model $d_model \
   --d_ff $d_ff \
-  --dropout 0.05 \
+  --dropout 0.3 \
+  --fc_dropout 0.3 \
   --head_dropout 0.0 \
   --des 'Exp' \
   --train_epochs 20 \
