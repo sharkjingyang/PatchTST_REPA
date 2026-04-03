@@ -18,8 +18,10 @@ n_heads=16
 d_ff=256
 
 # Joint distillation hyperparameters
-lambda_t=0.5   # teacher path loss weight (Loss②)
-lambda_a=0.1   # alignment loss weight   (Loss③)
+lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
+lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
+lambda_a=0.5        # Phase 2: alignment loss weight
+align_warmup=5      # epochs of teacher-only warmup before alignment starts
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -44,6 +46,8 @@ python -u run_longExp.py \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --lambda_t $lambda_t \
+  --lambda_t2 $lambda_t2 \
   --lambda_a $lambda_a \
+  --align_warmup_epochs $align_warmup \
   --device $device \
   >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_t}_la${lambda_a}.log

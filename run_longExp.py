@@ -62,9 +62,13 @@ if __name__ == '__main__':
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
     parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
     parser.add_argument('--lambda_t', type=float, default=0.5,
-                        help='PatchTST_future_align: teacher path loss weight (Loss②)')
-    parser.add_argument('--lambda_a', type=float, default=0.1,
-                        help='PatchTST_future_align: alignment loss weight (Loss③)')
+                        help='PatchTST_future_align: teacher loss weight during warmup phase (Loss②)')
+    parser.add_argument('--lambda_t2', type=float, default=0.1,
+                        help='PatchTST_future_align: teacher loss weight after warmup (Loss②, smaller to slow teacher drift)')
+    parser.add_argument('--lambda_a', type=float, default=0.5,
+                        help='PatchTST_future_align: alignment loss weight after warmup (Loss③)')
+    parser.add_argument('--align_warmup_epochs', type=int, default=5,
+                        help='PatchTST_future_align: epochs to train teacher only before enabling alignment')
     parser.add_argument('--contrastive_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'],
                         help='contrastive loss type: mean_pool (cosine after pooling), patch_wise_cos (per-patch cosine), patch_wise_mse (per-patch MSE)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')

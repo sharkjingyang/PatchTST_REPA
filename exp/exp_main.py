@@ -466,7 +466,9 @@ class Exp_Main(Exp_Basic):
                         batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
                         lambda_t = getattr(self.args, 'lambda_t', 0.5)
+                        lambda_t2 = getattr(self.args, 'lambda_t2', 0.1)
                         lambda_a = getattr(self.args, 'lambda_a', 0.5)
+                        align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
                         use_teacher = (lambda_t > 0 or lambda_a > 0)
 
                         if use_teacher:
@@ -476,7 +478,13 @@ class Exp_Main(Exp_Basic):
                             mse_loss = criterion(outputs, batch_y_pred)
                             loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
                             loss_align = F.mse_loss(z_enc, z_teacher.detach())
-                            loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+
+                            if epoch < align_warmup:
+                                # Phase 1: teacher warmup only, no alignment
+                                loss = mse_loss + lambda_t * loss_teacher
+                            else:
+                                # Phase 2: smaller lambda_t (slow teacher) + alignment
+                                loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
                             pred_student = self.model(batch_x)
@@ -605,7 +613,9 @@ class Exp_Main(Exp_Basic):
 
             best_suffix = ' ***' if is_best_update else ''
             if self.args.model == 'PatchTST_future_align':
-                extra_str = " | Teacher: {:.5f} | Align: {:.5f}".format(train_teacher_loss, train_contrastive_loss)
+                align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
+                phase = "warmup" if epoch < align_warmup else "align"
+                extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f}".format(phase, train_teacher_loss, train_contrastive_loss)
             elif train_contrastive_loss > 1e-8:
                 extra_str = " | Align: {:.5f}".format(train_contrastive_loss)
             else:
