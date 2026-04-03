@@ -52,4 +52,4 @@ python -u run_longExp.py \
   --align_warmup_epochs $align_warmup \
   --head_type $head_type \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_t}_la${lambda_a}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log
