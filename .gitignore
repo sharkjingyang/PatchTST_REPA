@@ -462,6 +462,9 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Claude Code local memory (never commit)
+.claude/
+
 # Dataset files (download separately)
 dataset/
 
