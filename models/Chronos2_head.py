@@ -12,6 +12,7 @@ except ImportError:
     HAS_CHRONOS = False
 
 from layers.PatchTST_backbone import Flatten_Head, PatchwiseHead
+from layers.RevIN import RevIN
 
 
 class Model(nn.Module):
@@ -66,6 +67,9 @@ class Model(nn.Module):
         individual = getattr(configs, 'individual', 0)
         head_dropout = getattr(configs, 'head_dropout', 0.0)
         self.head_type = getattr(configs, 'head_type', 'flatten')
+
+        # RevIN for future mode: normalize with x_past stats (consistent with FutureAlign)
+        self.revin_layer = RevIN(self.n_vars, affine=False) if self.embed_type == 'future' else None
 
         # proj_down: Linear(768 → d_model) bottleneck before head (only for embed_type='future')
         self.proj_down = None
@@ -154,8 +158,12 @@ class Model(nn.Module):
             # ---- "future" mode: always embed ground-truth future sequence ----
             # future_seq: (bs, pred_len, nvars) → (bs, nvars, pred_len)
             assert future_seq is not None, "embed_type='future' requires future_seq in forward()"
+
+            # RevIN norm on x_past to capture loc/scale (consistent with FutureAlign)
+            x_norm = self.revin_layer(x, 'norm')  # x: (bs, seq_len, nvars), stores stats
+
             future_perm = future_seq.permute(0, 2, 1)
-            embeddings_list, loc_scales = self.chronos.embed(future_perm.cpu())
+            embeddings_list, _ = self.chronos.embed(future_perm.cpu())
 
             # Stack: (bs, nvars, num_tokens+2, 768); take first num_output_patches
             embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
@@ -175,11 +183,10 @@ class Model(nn.Module):
             else:
                 output = self.flatten_head(embeddings_perm)    # (bs, nvars, pred_len)
 
-            loc_scale_stacked = torch.stack([ls[0] for ls in loc_scales], dim=0).to(self.device)
-            scale_stacked = torch.stack([ls[1] for ls in loc_scales], dim=0).to(self.device)
-            loc = loc_scale_stacked.squeeze(-1)
-            scale = scale_stacked.squeeze(-1)
-            output = output * scale.unsqueeze(-1) + loc.unsqueeze(-1)
+            # RevIN denorm using x_past stats
+            output = output.permute(0, 2, 1)        # (bs, pred_len, nvars)
+            output = self.revin_layer(output, 'denorm')
+            return output
 
         else:  # "past"
             # ---- "past" mode: embed past tokens ----
