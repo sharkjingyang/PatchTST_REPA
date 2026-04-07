@@ -102,14 +102,18 @@ class Model(nn.Module):
             # Teacher path: embed ground-truth future with frozen Chronos2
             future_perm = x_future.permute(0, 2, 1)  # (bs, nvars, pred_len)
 
-            embeddings_list, _ = self.chronos.embed(future_perm.cpu())
+            embeddings_list, loc_scales = self.chronos.embed(future_perm.cpu())
             # embeddings_list: list of length bs, each (nvars, num_tokens+2, 768)
             z_chron = torch.stack(embeddings_list, dim=0).to(x_past.device)
             # z_chron: (bs, nvars, num_tokens+2, 768)
             z_chron = z_chron[:, :, :self.num_output_patches, :]
             # z_chron: (bs, nvars, output_patch_num, 768)
 
-            pred_t, z_teacher = self.backbone.forward_teacher(z_chron)
+            # x_future loc/scale from Chronos2 (teacher denorm only — training only path)
+            loc   = torch.stack([ls[0] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
+            scale = torch.stack([ls[1] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
+
+            pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc=loc, scale=scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
             return pred_student, pred_teacher, z_enc, z_teacher

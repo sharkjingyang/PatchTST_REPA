@@ -13,8 +13,8 @@ class PatchTST_FutureAlign_backbone(nn.Module):
 
     Architecture:
         - Student path: x_past → RevIN → patch → TSTiEncoder → Head → RevIN denorm
-        - Teacher path: z_chron (from Chronos2) → proj_down → Head → RevIN denorm
-          (reuses RevIN stats stored by forward_student)
+        - Teacher path: z_chron (from Chronos2) → proj_down → Head → denorm with x_future loc/scale
+          (training only; uses Chronos2.embed(x_future) loc/scale for self-consistent denorm)
         - head_type: 'flatten' (Flatten_Head) or 'patch_wise' (PatchwiseHead)
           Both student and teacher use the same head type.
 
@@ -153,27 +153,30 @@ class PatchTST_FutureAlign_backbone(nn.Module):
     # ------------------------------------------------------------------
     # Teacher path
     # ------------------------------------------------------------------
-    def forward_teacher(self, z_chron):
+    def forward_teacher(self, z_chron, loc=None, scale=None):
         """
-        Must be called after forward_student (reuses RevIN stats).
-
         Args:
             z_chron: (bs, nvars, output_patch_num, 768)  — Chronos2 future embeddings
+            loc:     (bs, nvars)  — x_future mean from Chronos2.embed (preferred)
+            scale:   (bs, nvars)  — x_future std  from Chronos2.embed (preferred)
+                     If None, falls back to RevIN stats from forward_student (x_past stats).
         Returns:
-            pred:     (bs, nvars, pred_len)
+            pred:      (bs, nvars, pred_len)
             z_teacher: (bs, nvars, output_patch_num, d_model)  — for alignment loss
         """
         # proj_down: 768 → d_model
         z_teacher = self.proj_down(z_chron)  # (bs, nvars, P, d_model)
 
-        # Reshape for Flatten_Head: (bs, nvars, d_model, P)
+        # Reshape for head: (bs, nvars, d_model, P)
         z_perm = z_teacher.permute(0, 1, 3, 2)
 
         # Teacher head (independent from student head)
         pred = self.teacher_head(z_perm)  # (bs, nvars, pred_len)
 
-        # RevIN denorm (reuses stats from forward_student)
-        if self.revin:
+        # Denorm: use x_future loc/scale if provided, else fall back to RevIN(x_past)
+        if loc is not None and scale is not None:
+            pred = pred * scale.unsqueeze(-1) + loc.unsqueeze(-1)
+        elif self.revin:
             pred = pred.permute(0, 2, 1)
             pred = self.revin_layer(pred, 'denorm')
             pred = pred.permute(0, 2, 1)
