@@ -482,7 +482,9 @@ class Exp_Main(Exp_Basic):
                                 outputs = pred_student[:, :, f_dim:]
                                 mse_loss = torch.tensor(0.0, device=self.device)
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                loss_align = F.mse_loss(z_enc, z_teacher.detach())
+                                z_enc_n = F.normalize(z_enc, dim=-1)
+                                z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
+                                loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
                                 loss = lambda_t * loss_teacher
                             else:
                                 # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
@@ -490,7 +492,9 @@ class Exp_Main(Exp_Basic):
                                 outputs = pred_student[:, :, f_dim:]
                                 mse_loss = criterion(outputs, batch_y_pred)
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                loss_align = F.mse_loss(z_enc, z_teacher.detach())
+                                z_enc_n = F.normalize(z_enc, dim=-1)
+                                z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
+                                loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
                                 loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
