@@ -147,11 +147,12 @@ Output: (bs, pred_len, nvars) - denormalized
 ```
 Training & Inference (always uses true future):
   future_seq: (bs, pred_len, nvars) [ground truth]
-    ↓ Chronos2.embed(future_seq) - frozen
+    ↓ RevIN(x_past, 'norm') → stores x_past loc/scale (affine=False, consistent with PatchTST)
+    ↓ Chronos2.embed(future_seq) - frozen (x_future embeddings only, loc/scale discarded)
   Feature: (bs, nvars, 6, 768)  [6 = pred_len/patch_len]
     ↓ [optional] proj_down: Linear(768→d_model) if --proj_down 1
     ↓ Flatten_Head or PatchwiseHead
-    ↓ InstanceNorm.inverse (loc, scale from future embed)
+    ↓ RevIN(x_past, 'denorm') - uses x_past stats (consistent with PatchTST_future_align)
 Output: (bs, pred_len, nvars) - denormalized
 ```
 
@@ -270,8 +271,10 @@ handle.remove()
 | `contrastive_type` | mean_pool / patch_wise_cos / patch_wise_mse | mean_pool |
 | `chronos_embed_type` | Chronos2_head: past / predict / future | past |
 | `proj_down` | Chronos2_head (future mode): 1=add Linear(768→d_model) before head | 0 |
-| `lambda_t` | future_align: 教师路径预测损失权重 (Loss②) | 0.5 |
-| `lambda_a` | future_align: 对齐损失权重 (Loss③) | 0.5 |
+| `lambda_t` | future_align: 教师路径预测损失权重 (Loss②, Phase 1 warmup) | 0.5 |
+| `lambda_t2` | future_align: 教师路径预测损失权重 (Loss②, Phase 2) | 0.1 |
+| `lambda_a` | future_align: 对齐损失权重 (Loss③, patch-wise cosine) | 0.5 |
+| `align_warmup_epochs` | future_align: Phase 1 teacher-only warmup epoch 数 | 5 |
 
 ## Parameter Comparison
 
@@ -371,6 +374,48 @@ LatentTSF（ICML，arXiv:2602.00297）提出了 **Latent Chaos** 概念：MSE �
 - 原始观测空间 TL ≈ 12.94（参考基线）
 - 标准模型 latent TL ≈ 94.03（混乱 7×）
 - 损失函数：`ℒ = α·ℒ_Pred + β·ℒ_Align`，α=10，β=15
+
+## PatchTST_future_align 设计细节与实验观察
+
+### Normalization 设计
+
+| Path | Denorm 使用的统计量 | 原因 |
+|------|-------------------|------|
+| Student path | RevIN(x_past) loc/scale | 推理时无法获得 x_future，必须用 past |
+| Teacher path (training only) | Chronos2.embed(x_future) 返回的 loc/scale | Teacher 只在训练时用，x_future 此时可用；与 Chronos2 内部归一化自洽，Loss② 收敛快 |
+| Chronos2_head (future mode) | RevIN(x_past, affine=False) | 与 FutureAlign student path 保持一致；affine=False 与 PatchTST 默认值一致 |
+
+**关键点**：如果 teacher path 也用 RevIN(x_past) 做 denorm，则 teacher 在有趋势的序列上会遇到 per-sample scale mismatch（future 和 past 的均值不同），导致 Loss② 收敛显著变慢。
+
+### Alignment Loss（Loss③）
+
+使用 **patch-wise cosine similarity**（与 REPA 的 `patch_wise_cos` 完全一致）：
+
+```python
+z_enc_n = F.normalize(z_enc, dim=-1)          # (bs, nvars, patch_num, d_model)
+z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
+loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()  # range [-1, 1]，越负越对齐
+```
+
+- Scale-invariant：student MSE 处理 scale，alignment 只对齐方向
+- 打印的 Align loss 为负数，越接近 -1 说明对齐越好
+
+### 实验观察
+
+**FutureAlign vs 原始 PatchTST（ETTh1，pred_len=336）**：
+- MSE 提升有限（0.430 → 0.427），未达到显著改善
+- **但**：FutureAlign 在相同超参数下不易过拟合，val loss 曲线更稳定
+- Warmup 后 encoder 收敛更快，能在更少 epoch 内到达 minimizer
+
+**为什么 MSE 提升有限**：
+1. 根本矛盾：z_teacher 编码 x_future（真实未来），z_enc 只能看 x_past；cosine alignment 要求 encoder "预知未来"
+2. proj_down 在 Phase 2 仍通过 Loss② 更新，z_teacher 是移动靶
+3. 朴素 cosine 对齐未考虑 past/future 表示的系统性分布偏移
+
+**与 TimeAlign 的对比**（arXiv:2509.14181）：
+TimeAlign 使用 **distribution-aware alignment loss**，显式建模 past/future 表示分布的统计差异，而非逐 sample 点对点对齐。这解释了为什么 TimeAlign 有 MSE 提升而朴素 cosine 对齐效果有限——后者梯度中包含大量"不可预测未来"的噪声成分，distribution-aware 方法在分布层面平滑了这些噪声。
+
+**FutureAlign 真正的价值**：正则化效果——alignment loss 约束 encoder 表示空间，防止过拟合训练集特定模式，提升泛化稳定性。
 
 ## Directory Structure
 
