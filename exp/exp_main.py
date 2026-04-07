@@ -418,6 +418,8 @@ class Exp_Main(Exp_Basic):
             train_mse_loss = []
             train_teacher_loss = []
             train_contrastive_loss = []
+            train_cosine_loss = []
+            train_mse_align_loss = []
 
             self.model.train()
             epoch_time = time.time()
@@ -484,7 +486,9 @@ class Exp_Main(Exp_Basic):
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
                                 z_enc_n = F.normalize(z_enc, dim=-1)
                                 z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
+                                loss_cosine = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
+                                loss_mse_align = F.mse_loss(z_enc, z_teacher.detach())
+                                loss_align = loss_cosine + loss_mse_align
                                 loss = lambda_t * loss_teacher
                             else:
                                 # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
@@ -494,7 +498,9 @@ class Exp_Main(Exp_Basic):
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
                                 z_enc_n = F.normalize(z_enc, dim=-1)
                                 z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
+                                loss_cosine = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
+                                loss_mse_align = F.mse_loss(z_enc, z_teacher.detach())
+                                loss_align = loss_cosine + loss_mse_align
                                 loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
@@ -504,11 +510,15 @@ class Exp_Main(Exp_Basic):
                             loss = mse_loss
                             loss_teacher = torch.tensor(0.0)
                             loss_align = torch.tensor(0.0)
+                            loss_cosine = torch.tensor(0.0)
+                            loss_mse_align = torch.tensor(0.0)
 
                         train_loss.append(loss.item())
                         train_mse_loss.append(mse_loss.item())
                         train_teacher_loss.append(loss_teacher.item())
                         train_contrastive_loss.append(loss_align.item())
+                        train_cosine_loss.append(loss_cosine.item())
+                        train_mse_align_loss.append(loss_mse_align.item())
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(mse_loss.item())
                         loss_contrastive_per_step.append(loss_align.item())
@@ -609,6 +619,8 @@ class Exp_Main(Exp_Basic):
             train_mse_loss = np.average(train_mse_loss)
             train_teacher_loss = np.average(train_teacher_loss) if train_teacher_loss else 0.0
             train_contrastive_loss = np.average(train_contrastive_loss)
+            train_cosine_loss = np.average(train_cosine_loss) if train_cosine_loss else 0.0
+            train_mse_align_loss = np.average(train_mse_align_loss) if train_mse_align_loss else 0.0
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
@@ -626,7 +638,8 @@ class Exp_Main(Exp_Basic):
             if self.args.model == 'PatchTST_future_align':
                 align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
                 phase = "warmup" if epoch < align_warmup else "align"
-                extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f}".format(phase, train_teacher_loss, train_contrastive_loss)
+                extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f} (cos={:.4f} mse={:.4f})".format(
+                    phase, train_teacher_loss, train_contrastive_loss, train_cosine_loss, train_mse_align_loss)
             elif train_contrastive_loss > 1e-8:
                 extra_str = " | Align: {:.5f}".format(train_contrastive_loss)
             else:

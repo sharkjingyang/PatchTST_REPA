@@ -15,7 +15,7 @@ pred_len=336
 d_model=128
 chronos_embed_type=future
 proj_down=1
-head_type=flatten
+head_type=patch_wise
 
 python -u run_longExp.py \
   --random_seed $random_seed \
