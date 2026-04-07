@@ -1,4 +1,4 @@
-__all__ = ['PatchTST_backbone', 'Patch_Fusion_MLP', 'TransformerDecoder', 'PatchwiseHead']
+__all__ = ['PatchTST_backbone', 'PatchwiseHead']
 
 # Cell
 from typing import Callable, Optional
@@ -25,52 +25,6 @@ def build_linear(hidden_size, z_dim):
     return nn.Linear(hidden_size, z_dim)
 
 
-class Patch_Fusion_MLP(nn.Module):
-    """将 (B, nvars, d_model, input_patch_num) 投影到 (B, nvars, d_model, output_patch_num)
-    直接投影: d_model * input_patch_num → d_model * output_patch_num（无 hidden 层）
-    """
-    def __init__(self, input_patch_num, output_patch_num, d_model, dropout=0.0):
-        super().__init__()
-        self.output_patch_num = output_patch_num
-        self.d_model = d_model
-        self.projection = nn.Linear(d_model * input_patch_num, d_model * output_patch_num)
-
-    def forward(self, x):
-        # x: (B, nvars, d_model, input_patch_num)
-        B, nvars, d_model, input_patch_num = x.shape
-
-        # Flatten → project → reshape → (B, nvars, d_model, output_patch_num)
-        x = x.reshape(B, nvars, -1)
-        x = self.projection(x)
-        x = x.reshape(B, nvars, d_model, self.output_patch_num)
-
-        return x
-
-
-
-class TransformerDecoder(nn.Module):
-    """Transformer Decoder，用于在 patch_fusion 之后进一步处理
-    使用与 PatchTST_backbone 相同的 n_heads 参数"""
-    def __init__(self, output_patch_num, d_model, n_heads, d_layers=1, d_ff=None, dropout=0.0):
-        super().__init__()
-        if d_ff is None:
-            d_ff = d_model
-
-        self.layers = nn.ModuleList([
-            TSTEncoderLayer(
-                q_len=output_patch_num, d_model=d_model,
-                n_heads=n_heads, d_ff=d_ff, dropout=dropout, activation='gelu'
-            )
-            for _ in range(d_layers)
-        ])
-
-    def forward(self, x):
-        # x: (B*nvars, output_patch_num, d_model)
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
-
 # Cell
 class PatchTST_backbone(nn.Module):
     def __init__(self, c_in:int, context_window:int, target_window:int, patch_len:int, stride:int, max_seq_len:Optional[int]=1024,
@@ -79,10 +33,9 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
-                 encoder_depth: int = 2, contrastive: int = 0,
+                 encoder_depth: int = 2, alignment: int = 0,
                  num_quantiles: int = 20,
-                 output_patch_size: int = 16, use_patch_fusion: bool = False, patch_fusion_n_heads: int = 4,
-                 d_extractor: int = 768, d_layers: int = 1, patch_fusion_type: str = 'fusion_MLP',
+                 d_extractor: int = 768,
                  verbose:bool=False, **kwargs):
 
         super().__init__()
@@ -91,127 +44,49 @@ class PatchTST_backbone(nn.Module):
         self.revin = revin
         if self.revin: self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
 
-        # Patch Fusion parameters
-        self.use_patch_fusion = use_patch_fusion
-        self.output_patch_size = output_patch_size
-        self.patch_fusion_n_heads = patch_fusion_n_heads
         self.d_extractor = d_extractor
-
-        # Calculate output_patch_num (needed before patching for 'none' mode)
-        assert target_window % output_patch_size == 0, f"pred_len must be divisible by output_patch_size, got pred_len={target_window}, output_patch_size={output_patch_size}"
-        output_patch_num = target_window // output_patch_size
-
-        # Auto-compute patch_len for 'none' mode: patch_len = seq_len // output_patch_num
-        if patch_fusion_type == 'none' and use_patch_fusion:
-            patch_len = context_window // output_patch_num
-            stride = patch_len
-            padding_patch = None
 
         # Patching
         self.patch_len = patch_len
         self.stride = stride
         self.padding_patch = padding_patch
         patch_num = int((context_window - patch_len)/stride + 1)
-        if padding_patch == 'end': # can be modified to general case
+        if padding_patch == 'end':
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
 
         # Backbone
         self.encoder_depth = encoder_depth
         assert encoder_depth <= n_layers, f"encoder_depth ({encoder_depth}) must be <= e_layers ({n_layers})"
-        # When use_patch_fusion=True, only need encoder_depth layers (extract zs from that layer)
-        # No need for the remaining layers since we use Patch Fusion MLP + flatten head instead
-        n_layers_backbone = encoder_depth if use_patch_fusion else n_layers
         self.backbone = TSTiEncoder(c_in, patch_num=patch_num, patch_len=patch_len, max_seq_len=max_seq_len,
-                                n_layers=n_layers_backbone, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff,
+                                n_layers=n_layers, d_model=d_model, n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff,
                                 attn_dropout=attn_dropout, dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
                                 attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                 pe=pe, learn_pe=learn_pe, encoder_depth=encoder_depth, verbose=verbose, **kwargs)
 
         # Head
-        self.head = None
-        self.use_patch_fusion = use_patch_fusion
-        self.head_type = head_type  # Always set head_type for denorm
-        if not self.use_patch_fusion:
-            self.head_nf = d_model * patch_num
-            self.n_vars = c_in
-            self.pretrain_head = pretrain_head
-            self.individual = individual
-            self.target_window = target_window
-            self.num_quantiles = num_quantiles
-            self.patch_num = patch_num
+        self.head_nf = d_model * patch_num
+        self.n_vars = c_in
+        self.pretrain_head = pretrain_head
+        self.individual = individual
+        self.target_window = target_window
+        self.num_quantiles = num_quantiles
+        self.patch_num = patch_num
+        self.head_type = head_type
 
-            if self.pretrain_head:
-                self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout) # custom head passed as a partial func with all its kwargs
-            elif head_type == 'quantile':
-                self.head = Quantile_Head(self.n_vars, d_model, patch_num, target_window,
-                                           num_quantiles=num_quantiles, dropout=head_dropout)
-            elif head_type == 'flatten':
-                self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
+        if self.pretrain_head:
+            self.head = self.create_pretrain_head(self.head_nf, c_in, fc_dropout)
+        elif head_type == 'quantile':
+            self.head = Quantile_Head(self.n_vars, d_model, patch_num, target_window,
+                                       num_quantiles=num_quantiles, dropout=head_dropout)
+        elif head_type == 'flatten':
+            self.head = Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window, head_dropout=head_dropout)
 
-        self.contrastive = contrastive
+        self.alignment = alignment
         self.alignment_mlp_dim = d_extractor
         self.alignment_mlp = None
-        if self.contrastive and not self.use_patch_fusion:
+        if self.alignment:
             self.alignment_mlp = build_linear(d_model, d_extractor)
-
-        # Patch Fusion components (only when use_patch_fusion=True)
-        self.patch_fusion_mlp = None
-        self.transformer_decoder = None
-
-        # Patch Fusion 使用 d_channel=128 减少参数量，然后通过 alignment_mlp 投影到 d_extractor 用于对比学习
-        # split_MLP 只做 patch_num 投影，保留 d_model，所以 d_channel 直接等于 d_model
-        if self.use_patch_fusion:
-            # Set required variables for head creation
-            self.individual = individual
-            self.n_vars = c_in
-            self.target_window = target_window
-            self.patch_fusion_type = patch_fusion_type
-
-            # Patch_Fusion_MLP: (B, nvars, d_model, patch_num) -> (B, nvars, d_model, output_patch_num)
-            if patch_fusion_type == 'split_MLP':
-                # 只投影 patch_num 维度，保留 d_model
-                self.patch_fusion_mlp = nn.Linear(patch_num, output_patch_num)
-            elif patch_fusion_type == 'none':
-                # patch_len 已在上方自动计算，patch_num == output_patch_num 必然成立
-                # self.patch_fusion_mlp 保持 None（已在上方初始化）
-                pass
-            else:
-                self.patch_fusion_mlp = Patch_Fusion_MLP(
-                    input_patch_num=patch_num,
-                    output_patch_num=output_patch_num,
-                    d_model=d_model
-                )
-
-            # Transformer Decoder: (B*nvars, output_patch_num, d_model)
-            self.transformer_decoder = TransformerDecoder(
-                output_patch_num=output_patch_num,
-                d_model=d_model,
-                n_heads=patch_fusion_n_heads,
-                d_layers=d_layers,
-                d_ff=d_ff,
-                dropout=dropout
-            )
-
-            # Alignment Linear: d_model → d_extractor (用于对比学习，contrastive=0 时跳过)
-            if self.contrastive:
-                self.alignment_mlp = build_linear(d_model, d_extractor)
-
-            # Head for Patch Fusion branch
-            if head_type == 'patch_wise':
-                self.head = PatchwiseHead(
-                    n_vars=self.n_vars,
-                    d_model=d_model,
-                    output_patch_num=output_patch_num,
-                    output_patch_size=output_patch_size,
-                    dropout=head_dropout
-                )
-            elif head_type == 'flatten':
-                self.head = Flatten_Head(self.individual, self.n_vars, d_model * output_patch_num,
-                                         target_window, head_dropout=head_dropout)
-            elif head_type == 'quantile':
-                self.head = Quantile_Head(self.n_vars, d_model, output_patch_num,
-                                          target_window, num_quantiles=num_quantiles, dropout=head_dropout)
         
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
@@ -224,65 +99,24 @@ class PatchTST_backbone(nn.Module):
         # do patching
         if self.padding_patch == 'end':
             z = self.padding_patch_layer(z)
-        z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride)                   # z: [bs x nvars x patch_num x patch_len]
-        z = z.permute(0,1,3,2)                                                              # z: [bs x nvars x patch_len x patch_num]
+        z = z.unfold(dimension=-1, size=self.patch_len, step=self.stride)   # z: [bs x nvars x patch_num x patch_len]
+        z = z.permute(0,1,3,2)                                              # z: [bs x nvars x patch_len x patch_num]
 
-        # model - only request intermediate when contrastive=1 or use_patch_fusion=1
-        need_intermediate = self.contrastive or self.use_patch_fusion
-        if need_intermediate:
-            z, zs = self.backbone(z, return_intermediate=True)                               # z: [bs x nvars x d_model x patch_num], zs: intermediate output
+        # encoder
+        if self.alignment:
+            z, zs = self.backbone(z, return_intermediate=True)              # z, zs: [bs x nvars x d_model x patch_num]
         else:
-            # Original PatchTST: no intermediate output needed
-            z, _ = self.backbone(z, return_intermediate=False)                              # z: [bs x nvars x d_model x patch_num]
+            z, _ = self.backbone(z, return_intermediate=False)
             zs = None
 
-        # Build prediction output based on configuration
-        output = None
         zs_projected = None
-
-        if self.use_patch_fusion and zs is not None:
-            # Patch Fusion branch: encoder intermediate → patch_fusion_mlp → transformer_decoder → head
-            # zs: (bs, nvars, d_model, patch_num) - from encoder_depth layer
-
-            # Apply Patch_Fusion_MLP to get zs_fused
-            # Output: (bs, nvars, d_model, output_patch_num)
-            if self.patch_fusion_mlp is not None:
-                zs_fused = self.patch_fusion_mlp(zs)
-            else:
-                zs_fused = zs  # 'none' 模式：patch_num 已天然等于 output_patch_num
-
-            # For contrastive loss: project d_model → d_extractor
-            bs, nvars, d_model, output_patch_num = zs_fused.shape
-            if self.contrastive:
-                zs_fused_for_proj = zs_fused.permute(0, 1, 3, 2).reshape(-1, d_model)  # (bs*nvars*output_patch_num, d_model)
-                zs_projected_flat = self.alignment_mlp(zs_fused_for_proj)  # (bs*nvars*output_patch_num, d_extractor)
-                zs_projected = zs_projected_flat.reshape(bs, nvars, output_patch_num, self.d_extractor)  # (bs, nvars, output_patch_num, d_extractor)
-
-            # Apply Transformer Decoder
-            # Input: (bs, nvars, d_model, output_patch_num) -> (bs*nvars, output_patch_num, d_model)
-            zs_fused_flat = zs_fused.permute(0, 1, 3, 2).reshape(-1, output_patch_num, d_model)
-            zs_fused_processed = self.transformer_decoder(zs_fused_flat)  # (bs*nvars, output_patch_num, d_model)
-
-            # Reshape back: (bs*nvars, output_patch_num, d_model) -> (bs, nvars, d_model, output_patch_num)
-            zs_fused_processed = zs_fused_processed.reshape(bs, nvars, output_patch_num, d_model)
-            zs_fused_processed = zs_fused_processed.permute(0, 1, 3, 2)  # (bs, nvars, d_model, output_patch_num)
-
-            output = self.head(zs_fused_processed)  # (bs, nvars, target_window)
-
-        elif self.contrastive and not self.use_patch_fusion:
-            # Original MLP Projector branch: encoder intermediate → projector → contrastive loss
-            # Apply MLP projector to zs (no mean pooling - done in contrastive loss)
+        if self.contrastive and zs is not None:
             bs, nvars, d_model, patch_num = zs.shape
-            zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)                          # [bs*nvars*patch_num x d_model]
-            zs_projected = self.alignment_mlp(zs_flat)                                    # [bs*nvars*patch_num x projector_dim]
-            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.alignment_mlp_dim)   # [bs x nvars x patch_num x projector_dim]
+            zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)          # [bs*nvars*patch_num x d_model]
+            zs_projected = self.alignment_mlp(zs_flat)                     # [bs*nvars*patch_num x d_extractor]
+            zs_projected = zs_projected.reshape(bs, nvars, patch_num, self.alignment_mlp_dim)
 
-            # Encoder final output → Flatten Head
-            output = self.head(z)  # z: [bs x nvars x target_window]
-
-        else:
-            # Original PatchTST: encoder final output → Flatten Head
-            output = self.head(z)  # z: [bs x nvars x target_window] or [bs x nvars x num_quantiles x target_window]
+        output = self.head(z)
 
         # Apply denorm
         if self.revin and output is not None:
@@ -302,11 +136,7 @@ class PatchTST_backbone(nn.Module):
                 output = self.revin_layer(output, 'denorm')
                 output = output.permute(0, 2, 1)
 
-        # Return based on configuration
-        if self.use_patch_fusion:
-            # Return channel fusion output and zs_projected for contrastive loss
-            return output, zs_projected
-        elif self.contrastive:
+        if self.alignment:
             return output, zs_projected
         else:
             return output

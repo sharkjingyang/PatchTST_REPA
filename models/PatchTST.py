@@ -66,53 +66,32 @@ class Model(nn.Module):
         projector_dim = getattr(configs, 'projector_dim', 768)
 
         # Model type detection
-        self.model_name = configs.model  # PatchTST, PatchTST_REPA, PatchTST_REPA_Fusion
+        self.model_name = configs.model  # PatchTST, PatchTST_REPA
 
-        # Get contrastive setting from args
-        user_contrastive = getattr(configs, 'contrastive', None)
+        # Get alignment setting from args
+        user_alignment = getattr(configs, 'alignment', None)
 
-        # Set contrastive and use_patch_fusion based on model_name
-        # PatchTST_REPA_Fusion always uses Channel Fusion (cannot be disabled)
         if self.model_name == 'PatchTST_REPA':
-            self.contrastive = 1 if user_contrastive is None else user_contrastive
-            self.use_patch_fusion = False
-        elif self.model_name == 'PatchTST_REPA_Fusion':
-            self.contrastive = 1 if user_contrastive is None else user_contrastive
-            self.use_patch_fusion = True  # Always enabled
+            self.alignment = 1 if user_alignment is None else user_alignment
         else:  # PatchTST
-            self.contrastive = 0
-            self.use_patch_fusion = False
+            self.alignment = 0
 
         # Feature extractor parameters
         feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
-        mantis_pretrained = getattr(configs, 'mantis_pretrained', './Mantis')
-
-        # Channel fusion parameters
-        output_patch_size = getattr(configs, 'output_patch_size', 16)
-        patch_fusion_n_heads = getattr(configs, 'patch_fusion_n_heads', 4)
-        d_layers = getattr(configs, 'd_layers', 1)  # Transformer Decoder layers
-        patch_fusion_type = getattr(configs, 'patch_fusion_type', 'fusion_MLP')  # Channel fusion MLP type
 
         # d_extractor: based on feature extractor (Mantis=256, TiViT/Chronos=768)
-        if self.model_name == 'PatchTST_REPA_Fusion':
-            if feature_extractor == 'mantis':
-                d_extractor = 256
-                print(f"Using patch fusion with Mantis, d_extractor={d_extractor}")
-            else:
-                d_extractor = 768  # TiViT or Chronos
-                print(f"Using patch fusion with {feature_extractor}, d_extractor={d_extractor}")
+        if feature_extractor == 'mantis':
+            d_extractor = 256
+            projector_dim = 256
+            if self.alignment:
+                print(f"Using Mantis feature extractor, d_extractor={d_extractor}")
         else:
-            d_extractor = 768  # default
+            d_extractor = 768  # TiViT or Chronos
+            projector_dim = 768
+            if self.alignment:
+                print(f"Using {feature_extractor} feature extractor, d_extractor={d_extractor}")
 
-        # Auto-adjust projector_dim based on feature extractor (only for REPA models)
-        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
-            if feature_extractor == 'mantis':
-                projector_dim = 256  # Mantis output dimension
-                print(f"Using Mantis feature extractor, auto-adjusting projector_dim to {projector_dim}")
-            elif feature_extractor == 'chronos':
-                projector_dim = 768  # Chronos2 output dimension
-                print(f"Using Chronos feature extractor, auto-adjusting projector_dim to {projector_dim}")
-        self.feature_extractor = getattr(configs, 'feature_extractor', 'mantis')
+        self.feature_extractor = feature_extractor
         self.device = getattr(configs, 'device', 'cuda:0')
 
         # TiViT parameters
@@ -129,15 +108,13 @@ class Model(nn.Module):
 
         # Chronos parameters
         self.chronos_pretrained = getattr(configs, 'chronos_pretrained', './Chronos2')
-        self.chronos_output_dim = 768  # Chronos2 default output dimension
-        self.num_output_patches = configs.pred_len // 16  # Chronos2 native patch_len = 16
 
         # Build feature extractor (TiViT, Mantis or Chronos) only when using REPA model with contrastive
         self.tivit = None
         self.mantis = None
         self.chronos = None
 
-        if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion'] and self.contrastive:
+        if self.model_name == 'PatchTST_REPA' and self.alignment:
             if self.feature_extractor == 'tivit':
                 # Build TiViT
                 full_seq_len = context_window + target_window
@@ -178,11 +155,6 @@ class Model(nn.Module):
                     param.requires_grad = False
             else:
                 raise ValueError(f"Unknown feature_extractor: {self.feature_extractor}. Choose 'tivit', 'mantis' or 'chronos'.")
-        else:
-            # contrastive=0: original PatchTST, no TiViT/Mantis
-            pass
-            pass
-
         # Prediction head parameters
         head_type = getattr(configs, 'head_type', 'flatten')
         num_quantiles = getattr(configs, 'num_quantiles', 20)
@@ -191,227 +163,93 @@ class Model(nn.Module):
         self.decomposition = decomposition
         if self.decomposition:
             self.decomp_module = series_decomp(kernel_size)
-            # Use projector if model_name is PatchTST_REPA or PatchTST_REPA_Fusion
-            if self.model_name in ['PatchTST_REPA', 'PatchTST_REPA_Fusion']:
-                self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, encoder_depth=encoder_depth,
-                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
-                                      output_patch_size=output_patch_size, use_patch_fusion=self.use_patch_fusion,
-                                      patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
-                                      patch_fusion_type=patch_fusion_type,
-                                      verbose=verbose, **kwargs)
-                self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, encoder_depth=encoder_depth,
-                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
-                                      output_patch_size=output_patch_size,
-                                      patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
-                                      patch_fusion_type=patch_fusion_type,
-                                      verbose=verbose, **kwargs)
-            else:
-                # Original PatchTST: no projector params
-                self.model_trend = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, num_quantiles=num_quantiles,
-                                      verbose=verbose, **kwargs)
-                self.model_res = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch = padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, num_quantiles=num_quantiles,
-                                      verbose=verbose, **kwargs)
+            self.model_trend = PatchTST_backbone(c_in=c_in, context_window=context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
+                                  verbose=verbose, **kwargs)
+            self.model_res = PatchTST_backbone(c_in=c_in, context_window=context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
+                                  verbose=verbose, **kwargs)
         else:
-            # Use projector/channel_fusion only if contrastive=1 or use_patch_fusion=1
-            if self.contrastive or self.use_patch_fusion:
-                self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, encoder_depth=encoder_depth,
-                                      contrastive=self.contrastive, num_quantiles=num_quantiles,
-                                      output_patch_size=output_patch_size, use_patch_fusion=self.use_patch_fusion,
-                                      patch_fusion_n_heads=patch_fusion_n_heads, d_extractor=d_extractor, d_layers=d_layers,
-                                      patch_fusion_type=patch_fusion_type,
-                                      verbose=verbose, **kwargs)
-            else:
-                # Original PatchTST: no projector params
-                self.model = PatchTST_backbone(c_in=c_in, context_window = context_window, target_window=target_window, patch_len=patch_len, stride=stride,
-                                      max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
-                                      n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
-                                      dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
-                                      attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
-                                      pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
-                                      pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                      subtract_last=subtract_last, num_quantiles=num_quantiles,
-                                      verbose=verbose, **kwargs)
+            self.model = PatchTST_backbone(c_in=c_in, context_window=context_window, target_window=target_window, patch_len=patch_len, stride=stride,
+                                  max_seq_len=max_seq_len, n_layers=n_layers, d_model=d_model,
+                                  n_heads=n_heads, d_k=d_k, d_v=d_v, d_ff=d_ff, norm=norm, attn_dropout=attn_dropout,
+                                  dropout=dropout, act=act, key_padding_mask=key_padding_mask, padding_var=padding_var,
+                                  attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
+                                  pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
+                                  pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
+                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
+                                  verbose=verbose, **kwargs)
     
     
-    def forward(self, x, target=None, return_projector=False):           # x: [Batch, Input length, Channel], target: [Batch, Target length, Channel]
-        """
-        Args:
-            x: input sequence [Batch, Input length, Channel]
-            target: target sequence [Batch, Target length, Channel], used for TiViT feature extraction
-            return_projector: if True, return zs_project and zs_tilde for contrastive loss (training only)
-        """
+    def forward(self, x, target=None, return_projector=False):
         if self.decomposition:
             res_init, trend_init = self.decomp_module(x)
-            res_init, trend_init = res_init.permute(0,2,1), trend_init.permute(0,2,1)  # x: [Batch, Channel, Input length]
+            res_init, trend_init = res_init.permute(0,2,1), trend_init.permute(0,2,1)
             res = self.model_res(res_init)
             trend = self.model_trend(trend_init)
             x = res + trend
-            x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
-            return x, x  # Return same output for both when using decomposition
+            x = x.permute(0,2,1)
+            return x
         else:
-            x_original = x  # (bs, seq_len, nvars), 用于 Chronos encode
-            x = x.permute(0,2,1)    # x: [Batch, Channel, Input length]
+            x_original = x  # (bs, seq_len, nvars)
+            x = x.permute(0,2,1)  # (bs, nvars, seq_len)
 
-            # Check head_type
-            head_type = getattr(self.model, 'head_type', 'flatten') if hasattr(self, 'model') else 'flatten'
+            head_type = getattr(self.model, 'head_type', 'flatten')
 
-            # Channel Fusion always returns tuple (output, zs)
-            if self.use_patch_fusion:
-                output, zs = self.model(x)  # returns (output2, zs_projected) - only patch fusion branch
-                # Permute output based on head_type
+            if not self.alignment:
+                output = self.model(x)
                 if head_type == 'quantile':
-                    # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
-                    output = output.permute(0, 3, 1, 2)
+                    return output.permute(0, 3, 1, 2)
                 else:
-                    # output: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
-                    output = output.permute(0, 2, 1)
+                    return output.permute(0, 2, 1)
 
-                # If contrastive=0, don't return zs for contrastive loss
-                if not self.contrastive:
-                    return output
-
-                # Extract zs_tilde for contrastive learning
-                zs_tilde = None
-                if return_projector and target is not None:
-                    with torch.no_grad():
-                        target_pred = target  # (bs, pred_len, nvars) - already sliced in exp_main.py
-
-                        if self.feature_extractor == 'tivit' and self.tivit is not None:
-                            # TiViT extraction
-                            zs_tilde_list = []
-                            for c in range(target_pred.shape[2]):
-                                channel_input = target_pred[:, :, c:c+1]
-                                channel_embed = self.tivit(channel_input)
-                                zs_tilde_list.append(channel_embed)
-                            zs_tilde = torch.stack(zs_tilde_list, dim=1)
-                        elif self.feature_extractor == 'mantis' and self.mantis is not None:
-                            # Mantis extraction
-                            target_perm = target_pred.permute(0, 2, 1)
-                            target_scaled = F.interpolate(
-                                target_perm.float(),
-                                size=512,
-                                mode='linear',
-                                align_corners=False
-                            )
-                            target_np = target_scaled.cpu().numpy()
-                            bs, nvars, _ = target_scaled.shape
-                            zs_tilde_flat = self.mantis.transform(target_np)
-                            zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
-                            zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)
-                        elif self.feature_extractor == 'chronos' and self.chronos is not None:
-                            if self.model.patch_fusion_type == 'none' and target is not None:
-                                # none 模式：对齐未来序列的 Chronos2 表示
-                                input_seq = target  # (bs, pred_len, nvars)
-                            else:
-                                input_seq = x_original  # (bs, seq_len, nvars)
-                            input_perm = input_seq.permute(0, 2, 1)
-                            num_tokens = input_seq.shape[1] // 16
-                            embeddings_list, _ = self.chronos.embed(input_perm.cpu())
-                            embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
-                            zs_tilde = embeddings[:, :, :num_tokens, :]  # (bs, nvars, num_tokens, 768)
-
-                # Return (output, zs, zs_tilde) for contrastive learning
-                return output, zs, zs_tilde
-
-            # Original PatchTST (non-channel-fusion)
-            # Original PatchTST (contrastive=0): return only output
-            if not self.contrastive:
-                output = self.model(x)  # returns only output
-                if head_type == 'quantile':
-                    # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
-                    output = output.permute(0, 3, 1, 2)  # (bs, pred_len, nvars, num_quantiles)
-                    return output
-                else:
-                    output = output.permute(0,2,1)    # output: [Batch, Input length, Channel]
-                    return output
-
-            # With projector (contrastive=1): return output and zs
-            output, zs = self.model(x)  # returns (output, zs_projected)
-            # Permute output based on head_type
+            # contrastive=1: returns (output, zs_projected)
+            output, zs = self.model(x)
             if head_type == 'quantile':
-                # output: (bs, nvars, num_quantiles, pred_len) -> (bs, pred_len, nvars, num_quantiles)
                 output = output.permute(0, 3, 1, 2)
             else:
-                # output: (bs, nvars, pred_len) -> (bs, pred_len, nvars)
                 output = output.permute(0, 2, 1)
 
-            # Only extract feature extractor features when return_projector=True (training)
-            # Note: target should already be sliced to pred_len in exp_main.py
             zs_tilde = None
             if return_projector and target is not None:
                 with torch.no_grad():
-                    target_pred = target  # (bs, pred_len, nvars) - already sliced in exp_main.py
+                    target_pred = target  # (bs, pred_len, nvars)
 
                     if self.feature_extractor == 'tivit' and self.tivit is not None:
-                        # TiViT extraction
-                        # target_pred: (bs, pred_len, nvars)
-                        # TiViT expects input: (bs, seq_len, 1) for single channel
                         zs_tilde_list = []
-                        for c in range(target_pred.shape[2]):  # target_pred.shape[2] = nvars
-                            channel_input = target_pred[:, :, c:c+1]  # (bs, pred_len, 1)
-                            channel_embed = self.tivit(channel_input)  # (bs, d_vit)
+                        for c in range(target_pred.shape[2]):
+                            channel_input = target_pred[:, :, c:c+1]
+                            channel_embed = self.tivit(channel_input)
                             zs_tilde_list.append(channel_embed)
-                        zs_tilde = torch.stack(zs_tilde_list, dim=1)  # (bs, nvars, d_vit)
+                        zs_tilde = torch.stack(zs_tilde_list, dim=1)
                     elif self.feature_extractor == 'mantis' and self.mantis is not None:
-                        # Mantis extraction
-                        # Mantis expects: (n_samples, channels, time_steps)
-                        # target_pred: (bs, pred_len, nvars) -> (bs, nvars, pred_len)
-                        target_perm = target_pred.permute(0, 2, 1)  # (bs, nvars, pred_len)
-                        # Resize to 512 for Mantis
-                        target_scaled = F.interpolate(
-                            target_perm.float(),
-                            size=512,
-                            mode='linear',
-                            align_corners=False
-                        )  # (bs, nvars, 512)
-                        # Mantis transform: (n_samples, channels, time_steps) -> (n_samples, channels * 256)
+                        target_perm = target_pred.permute(0, 2, 1)
+                        target_scaled = F.interpolate(target_perm.float(), size=512, mode='linear', align_corners=False)
                         target_np = target_scaled.cpu().numpy()
                         bs, nvars, _ = target_scaled.shape
-                        zs_tilde_flat = self.mantis.transform(target_np)  # (bs, nvars * 256)
-                        # Convert back to tensor and reshape
+                        zs_tilde_flat = self.mantis.transform(target_np)
                         zs_tilde_flat = torch.from_numpy(zs_tilde_flat).float().to(self.device)
-                        zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)  # (bs, nvars, 256)
+                        zs_tilde = zs_tilde_flat.reshape(bs, nvars, -1)
                     elif self.feature_extractor == 'chronos' and self.chronos is not None:
-                        # 用 embed() 从 batch_x 提取 past tokens 用于对齐
                         input_perm = x_original.permute(0, 2, 1)  # (bs, nvars, seq_len)
-                        num_past = x_original.shape[1] // 16  # seq_len // chronos patch_len=16
-                        embeddings_list, _ = self.chronos.embed(input_perm.cpu())  # list of (bs, nvars, num_past+2, 768) - 2 extra tokens for CLS and SEP
-                        embeddings = torch.stack(embeddings_list, dim=0).to(self.device)  # (bs, nvars, num_past+2, 768)
+                        num_past = x_original.shape[1] // 16
+                        embeddings_list, _ = self.chronos.embed(input_perm.cpu())
+                        embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
                         zs_tilde = embeddings[:, :, :num_past, :]  # (bs, nvars, num_past, 768)
 
             if return_projector:

@@ -60,7 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--e_layers', type=int, default=4, help='num of encoder layers')
     parser.add_argument('--encoder_depth', type=int, default=2, help='which layer to extract intermediate output')
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
-    parser.add_argument('--lambda_contrastive', type=float, default=0.5, help='weight for contrastive loss')
+    parser.add_argument('--lambda_alignment', type=float, default=0.5, help='weight for alignment loss (REPA models)')
     parser.add_argument('--lambda_t', type=float, default=0.5,
                         help='PatchTST_future_align: teacher loss weight during warmup phase (Loss②)')
     parser.add_argument('--lambda_t2', type=float, default=0.1,
@@ -68,9 +68,11 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_a', type=float, default=0.5,
                         help='PatchTST_future_align: alignment loss weight after warmup (Loss③)')
     parser.add_argument('--align_warmup_epochs', type=int, default=5,
-                        help='PatchTST_future_align: epochs to train teacher only before enabling alignment')
-    parser.add_argument('--contrastive_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'],
-                        help='contrastive loss type: mean_pool (cosine after pooling), patch_wise_cos (per-patch cosine), patch_wise_mse (per-patch MSE)')
+                        help='PatchTST_future_align/PatchTST_decoder: epochs to train teacher only before enabling alignment')
+    parser.add_argument('--decoder_layers', type=int, default=1,
+                        help='PatchTST_decoder: number of FutureQueryDecoder cross-attention layers')
+    parser.add_argument('--alignment_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'],
+                        help='alignment loss type: mean_pool (cosine after pooling), patch_wise_cos (per-patch cosine), patch_wise_mse (per-patch MSE)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')
     parser.add_argument('--feature_extractor', type=str, default='mantis', choices=['tivit', 'mantis', 'chronos'], help='Feature extractor for contrastive loss: tivit, mantis or chronos')
     parser.add_argument('--mantis_pretrained', type=str, default='./Mantis', help='Mantis pretrained model path')
@@ -79,15 +81,10 @@ if __name__ == '__main__':
                         help='Prediction head type: flatten for point prediction, quantile for quantile prediction')
     parser.add_argument('--num_quantiles', type=int, default=20,
                         help='Number of quantiles for quantile head')
-    parser.add_argument('--output_patch_size', type=int, default=16,
-                        help='Output patch size for patch fusion branch (used in PatchTST_REPA_Fusion)')
-    parser.add_argument('--patch_fusion_n_heads', type=int, default=4,
-                        help='Number of attention heads for patch fusion branch (used in PatchTST_REPA_Fusion)')
-    parser.add_argument('--d_layers', type=int, default=1, help='Number of Transformer Decoder layers for patch fusion (used in PatchTST_REPA_Fusion)')
-    parser.add_argument('--patch_fusion_type', type=str, default='fusion_MLP', choices=['fusion_MLP', 'split_MLP', 'none'],
-                        help='Patch fusion MLP type: fusion_MLP (joint projection), split_MLP (separable projection), or none (no fusion, requires patch_num==output_patch_num)')
-    parser.add_argument('--contrastive', type=int, default=None,
-                        help='Enable contrastive learning loss (None=auto based on model, 0=disable, 1=enable)')
+    parser.add_argument('--alignment', type=int, default=None,
+                        help='Enable alignment/distillation (None=auto, 0=disable, 1=enable). '
+                             'PatchTST_REPA: load FM for alignment; '
+                             'PatchTST_future_align/decoder: load Chronos2 teacher')
     parser.add_argument('--chronos_embed_type', type=str, default='past',
                         choices=['past', 'predict', 'future'],
                         help='Chronos2_head embed mode: past=past tokens+Flatten_Head, predict=future tokens+PatchwiseHead, future=ground-truth future+Flatten_Head (teacher-forcing)')

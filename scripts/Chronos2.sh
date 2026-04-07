@@ -16,13 +16,13 @@ d_model=16
 d_ff=128
 e_layers=3
 encoder_depth=3
-lambda_contrastive=0.5
+lambda_alignment=0.5
 lr=0.0001
 
 # Choose feature extractor: 'tivit', 'mantis' or 'chronos'
 feature_extractor='chronos'
-contrastive=1
-contrastive_type='patch_wise_cos'
+alignment=1
+alignment_type='patch_wise_cos'
 head_type='flatten'
 
 python -u run_longExp.py \
@@ -49,14 +49,14 @@ python -u run_longExp.py \
   --patch_len 16\
   --stride 16\
   --padding_patch None\
-  --contrastive $contrastive\
+  --alignment $alignment\
   --head_type $head_type\
   --des 'Exp' \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate $lr \
   --feature_extractor $feature_extractor \
-  --contrastive_type $contrastive_type \
+  --alignment_type $alignment_type \
   --projector_dim 768 \
-  --lambda_contrastive $lambda_contrastive \
+  --lambda_alignment $lambda_alignment \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_lc${lambda_contrastive}_${contrastive_type}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_al${alignment}_la${lambda_alignment}_${alignment_type}_${head_type}.log

@@ -9,30 +9,32 @@ try:
 except ImportError:
     HAS_CHRONOS = False
 
-from layers.PatchTST_FutureAlign_backbone import PatchTST_FutureAlign_backbone
+from layers.PatchTST_Decoder_backbone import PatchTST_Decoder_backbone
 
 
 class Model(nn.Module):
-    """Joint Distillation Training model (PatchTST_future_align).
+    """PatchTST_decoder — FutureQueryDecoder with optional Chronos2 distillation.
 
-    Two modes controlled by --contrastive:
+    Controlled by --contrastive:
     - Distillation mode (contrastive=1): loads Chronos2 teacher for alignment
-    - Standalone mode (contrastive=0): pure encoder → head, no Chronos2 needed
+    - Standalone mode (contrastive=0): pure FutureQueryDecoder, no Chronos2 needed
 
-    Training (distillation mode):
-        Path A (Teacher):
-            x_future → Chronos2 (frozen) → z_chron
-                     → proj_down (768→d_model, trainable)
-                     → z_teacher → Head → pred_teacher
+    Difference from PatchTST_future_align:
+        - A FutureQueryDecoder (cross-attention) sits between encoder and head.
+        - Alignment target z_future (decoder output) is future-oriented,
+          closing the gap with z_teacher (Chronos2 future embeddings).
+        - PatchwiseHead is the natural choice: decoder patch i semantically
+          maps to future segment i.
 
-        Path B (Student):
-            x_past → Encoder (trainable) → z_enc → Head → pred_student
+    Training paths (distillation mode):
+        Student: x_past → Encoder → FutureQueryDecoder → Head → pred_s
+        Teacher: x_future → Chronos2 (frozen) → proj_down → teacher_head → pred_t
 
-        Loss = MSE(pred_student, y)                         # Loss①
-             + λ_t * MSE(pred_teacher, y)                   # Loss②
-             + λ_a * MSE(z_enc, z_teacher.detach())         # Loss③
+        Loss = MSE(pred_s, y)                              # Loss①
+             + λ_t  * MSE(pred_t, y)                      # Loss② (warmup only / reduced in phase 2)
+             + λ_a  * (cosine + MSE)(z_future, z_teacher)  # Loss③
 
-    Inference: only Path B — Chronos2 not needed.
+    Inference: Chronos2 not needed.
     """
 
     def __init__(self, configs):
@@ -42,13 +44,13 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
         self.device_str = getattr(configs, 'device', 'cuda:0')
 
-        # Number of future patches
+        # Number of future patches (pred_len // 16)
         self.num_output_patches = configs.pred_len // 16
 
         # Check if we need teacher path (distillation mode)
         # Use --alignment to control: 1=enable distillation (load Chronos2), 0=standalone mode
         user_alignment = getattr(configs, 'alignment', None)
-        self.use_teacher = 0 if user_alignment is not None and user_alignment == 0 else 1
+        self.use_teacher = False if user_alignment is not None and user_alignment == 0 else True
 
         # ---- Chronos2 (frozen) ---- only load when needed
         if self.use_teacher:
@@ -68,8 +70,8 @@ class Model(nn.Module):
         else:
             self.chronos = None
 
-        # ---- Backbone (encoder + proj_down + shared head) ----
-        self.backbone = PatchTST_FutureAlign_backbone(
+        # ---- Backbone (encoder + FutureQueryDecoder + proj_down + heads) ----
+        self.backbone = PatchTST_Decoder_backbone(
             c_in=configs.enc_in,
             context_window=configs.seq_len,
             target_window=configs.pred_len,
@@ -83,7 +85,8 @@ class Model(nn.Module):
             revin=getattr(configs, 'revin', 1),
             affine=getattr(configs, 'affine', 0),
             subtract_last=getattr(configs, 'subtract_last', 0),
-            head_type=getattr(configs, 'head_type', 'flatten'),
+            head_type=getattr(configs, 'head_type', 'patch_wise'),
+            decoder_layers=getattr(configs, 'decoder_layers', 1),
         )
 
     def forward(self, x_past, x_future=None):
@@ -95,7 +98,7 @@ class Model(nn.Module):
         Returns (training):
             pred_student: (bs, pred_len, nvars)
             pred_teacher: (bs, pred_len, nvars)
-            z_enc:        (bs, nvars, output_patch_num, d_model)
+            z_future:     (bs, nvars, output_patch_num, d_model)
             z_teacher:    (bs, nvars, output_patch_num, d_model)
 
         Returns (inference):
@@ -105,7 +108,7 @@ class Model(nn.Module):
         x_perm = x_past.permute(0, 2, 1)
 
         # Student path
-        pred_s, z_enc = self.backbone.forward_student(x_perm)
+        pred_s, z_future = self.backbone.forward_student(x_perm)
         pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
         if x_future is not None and self.use_teacher:
@@ -119,14 +122,14 @@ class Model(nn.Module):
             z_chron = z_chron[:, :, :self.num_output_patches, :]
             # z_chron: (bs, nvars, output_patch_num, 768)
 
-            # x_future loc/scale from Chronos2 (teacher denorm only — training only path)
+            # x_future loc/scale from Chronos2 (for teacher path denorm)
             loc   = torch.stack([ls[0] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
             scale = torch.stack([ls[1] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
 
             pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc=loc, scale=scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
-            return pred_student, pred_teacher, z_enc, z_teacher
+            return pred_student, pred_teacher, z_future, z_teacher
 
         # Student only (no teacher / no distillation)
         return pred_student

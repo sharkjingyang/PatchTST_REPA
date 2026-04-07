@@ -21,9 +21,9 @@ e_layers=4
 
 # Choose feature extractor: 'tivit' or 'mantis'
 feature_extractor='mantis'
-contrastive=1
-lambda_contrastive=0.5
-contrastive_type='mean_pool'
+alignment=1
+lambda_alignment=0.5
+alignment_type='mean_pool'
 head_type='flatten'
 
 python -u run_longExp.py \
@@ -52,12 +52,12 @@ python -u run_longExp.py \
   --train_epochs 20\
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
   --feature_extractor $feature_extractor \
-  --contrastive_type $contrastive_type \
+  --alignment_type $alignment_type \
   --head_type $head_type \
   --projector_dim 768 \
-  --contrastive $contrastive \
-  --lambda_contrastive $lambda_contrastive \
+  --alignment $alignment \
+  --lambda_alignment $lambda_alignment \
   --tivit_pretrained ./open_clip/open_clip_model.safetensors \
   --mantis_pretrained ./Mantis \
   --device $device \
-  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_ct${contrastive}_lc${lambda_contrastive}_${contrastive_type}_${head_type}.log
+  >logs/LongForecasting/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_${feature_extractor}_al${alignment}_la${lambda_alignment}_${alignment_type}_${head_type}.log

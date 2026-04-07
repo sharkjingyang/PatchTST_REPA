@@ -7,8 +7,8 @@ Extended implementation of [PatchTST](https://arxiv.org/abs/2211.14730) with fea
 | Model | Description |
 |-------|-------------|
 | `PatchTST` | Original PatchTST (baseline) |
-| `PatchTST_REPA` | PatchTST + Linear Projector + contrastive loss (past→FM alignment) |
-| `PatchTST_REPA_Fusion` | PatchTST + Patch Fusion branch + contrastive loss |
+| `PatchTST_REPA` | PatchTST + Linear Projector + alignment loss (past→FM alignment) |
+| `PatchTST_REPA_Fusion` | PatchTST + Patch Fusion branch + alignment loss |
 | `PatchTST_future_align` | Joint distillation: Encoder (student) + Chronos2 future embeddings (teacher) |
 | `Chronos2_head` | Frozen Chronos2 encoder + trainable prediction head |
 
@@ -39,8 +39,8 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 16 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.1 \
-  --contrastive_type patch_wise_cos
+  --feature_extractor chronos --lambda_alignment 0.1 \
+  --alignment_type patch_wise_cos
 
 # PatchTST_REPA_Fusion + Chronos2 (recommended: split_MLP + patch_wise_cos)
 python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
@@ -125,10 +125,10 @@ Three `patch_fusion_type` modes:
 | Parameter | Models | Description | Default |
 |-----------|--------|-------------|---------|
 | `feature_extractor` | REPA, Fusion | `tivit` / `mantis` / `chronos` | `mantis` |
-| `contrastive_type` | REPA, Fusion | `mean_pool` / `patch_wise_cos` / `patch_wise_mse` | `mean_pool` |
-| `lambda_contrastive` | REPA, Fusion | Contrastive loss weight | 0.5 (recommended 0.1) |
+| `alignment_type` | REPA, Fusion | `mean_pool` / `patch_wise_cos` / `patch_wise_mse` | `mean_pool` |
+| `lambda_alignment` | REPA, Fusion | Alignment loss weight | 0.5 (recommended 0.1) |
 | `patch_fusion_type` | Fusion | `fusion_MLP` / `split_MLP` / `none` | `fusion_MLP` |
-| `contrastive` | REPA, Fusion | Enable contrastive loss (1/0/None=auto) | auto |
+| `alignment` | REPA, Fusion | Enable alignment (1/0/None=auto) | auto |
 | `head_type` | All | `flatten` / `patch_wise` / `quantile` | `flatten` |
 | `chronos_embed_type` | Chronos2_head | `past` / `predict` / `future` | `past` |
 | `proj_down` | Chronos2_head | Add Linear(768→d_model) before head (future mode) | 0 |

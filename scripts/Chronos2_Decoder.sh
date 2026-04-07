@@ -3,7 +3,7 @@ if [ ! -d "./logs" ]; then
 fi
 
 seq_len=336
-model_name=PatchTST_future_align
+model_name=PatchTST_decoder
 device="cuda:0"
 
 root_path_name=./dataset/
@@ -11,11 +11,14 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=336
+pred_len=96
 d_model=128
 e_layers=3
-n_heads=16
+n_heads=8
 d_ff=256
+
+# FutureQueryDecoder hyperparameters
+decoder_layers=1    # number of cross-attention layers in FutureQueryDecoder
 
 # Distillation settings
 alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chronos2)
@@ -25,7 +28,7 @@ lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
 lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
 lambda_a=0.5        # Phase 2: alignment loss weight
 align_warmup=5      # epochs of teacher-only warmup before alignment starts
-head_type=flatten   # flatten or patch_wise
+head_type=patch_wise  # patch_wise (recommended) or flatten
 
 python -u run_longExp.py \
   --random_seed $random_seed \
@@ -49,6 +52,7 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
+  --decoder_layers $decoder_layers \
   --alignment $alignment \
   --lambda_t $lambda_t \
   --lambda_t2 $lambda_t2 \
@@ -56,4 +60,4 @@ python -u run_longExp.py \
   --align_warmup_epochs $align_warmup \
   --head_type $head_type \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_dl${decoder_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log

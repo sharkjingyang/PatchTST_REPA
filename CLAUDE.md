@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Extended implementation of PatchTST with feature alignment using contrastive learning. Supports four feature extractors: **TiViT**, **Mantis**, **Chronos2**, and **Chronos2_head** (frozen encoder + prediction head). Also includes **PatchTST_future_align** (joint distillation with Chronos2 teacher).
+Extended implementation of PatchTST with feature alignment using contrastive learning and knowledge distillation from Chronos2. Supports feature extractors: **TiViT**, **Mantis**, **Chronos2**. Models include **PatchTST_REPA** (contrastive alignment), **PatchTST_future_align** (joint distillation), **PatchTST_decoder** (FutureQueryDecoder + distillation), and **Chronos2_head** (frozen encoder + head).
 
 ## Quick Start
 
@@ -33,39 +33,54 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --patch_len 16 --stride 16 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.1 \
-  --contrastive_type patch_wise_cos
+  --feature_extractor chronos --lambda_alignment 0.1 \
+  --alignment_type patch_wise_cos
 
-# PatchTST_REPA_Fusion (Patch Fusion + Contrastive Loss)
-# Recommended: split_MLP + patch_wise_cos + lambda=0.1
-python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
-  --root_path ./dataset/ --data_path weather.csv \
-  --features M --seq_len 336 --pred_len 96 \
-  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --patch_len 16 --stride 8 --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.1 \
-  --patch_fusion_type split_MLP --contrastive_type patch_wise_cos
+# PatchTST_future_align (encoder + optional Chronos2 future distillation)
+# patch_len 自动推导；--alignment 0 时退化为普通 encoder → head（不加载 Chronos2）
 
-# PatchTST_REPA_Fusion (none mode: 无 fusion MLP，patch_len 自动推导)
-# patch_len/stride/padding_patch 参数会被忽略，自动计算：patch_len = seq_len // output_patch_num
-# none 模式下对齐目标为 chronos.embed(batch_y)（未来序列）
-python -u run_longExp.py --is_training 1 --model PatchTST_REPA_Fusion --data custom \
-  --root_path ./dataset/ --data_path weather.csv \
-  --features M --seq_len 336 --pred_len 96 \
-  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
-  --batch_size 128 --learning_rate 0.0001 \
-  --feature_extractor chronos --lambda_contrastive 0.1 \
-  --patch_fusion_type none --contrastive_type patch_wise_cos
-
-# PatchTST_future_align (joint distillation: student encoder + Chronos2 future teacher)
-# patch_len 自动推导，无需手动指定；dropout 与 REPA_Fusion 保持一致
+# Distillation mode (with Chronos2 teacher)
 python -u run_longExp.py --is_training 1 --model PatchTST_future_align --data custom \
   --root_path ./dataset/ --data_path weather.csv \
   --features M --seq_len 336 --pred_len 96 \
   --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
   --dropout 0.3 --fc_dropout 0.3 --head_dropout 0.0 \
   --batch_size 128 --learning_rate 0.0001 \
-  --lambda_t 0.5 --lambda_a 0.5
+  --alignment 1 --lambda_t 0.5 --lambda_a 0.5
+
+# Standalone mode (no Chronos2, pure encoder → head) — no chronos package needed
+python -u run_longExp.py --is_training 1 --model PatchTST_future_align --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 16 --d_model 128 --d_ff 256 \
+  --dropout 0.3 --fc_dropout 0.3 --head_dropout 0.0 \
+  --batch_size 128 --learning_rate 0.0001 \
+  --alignment 0
+
+# PatchTST_decoder (FutureQueryDecoder + optional Chronos2 distillation)
+# patch_len=16 (Chronos2 native), stride=16; decoder_layers=cross-attention 层数（默认 1）
+# head_type=patch_wise 为推荐配置（FutureQueryDecoder 使 PatchwiseHead 语义成立）
+# --alignment 0 时退化为无 Chronos2 版本（纯 FutureQueryDecoder 预测）
+
+# Distillation mode (with Chronos2 teacher)
+python -u run_longExp.py --is_training 1 --model PatchTST_decoder --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 8 --d_model 128 --d_ff 256 \
+  --dropout 0.3 --fc_dropout 0.3 --head_dropout 0.0 \
+  --batch_size 128 --learning_rate 0.0001 \
+  --alignment 1 --lambda_t 0.5 --lambda_a 0.5 \
+  --decoder_layers 1 --head_type patch_wise
+
+# Standalone mode (no Chronos2, pure FutureQueryDecoder) — no chronos package needed
+python -u run_longExp.py --is_training 1 --model PatchTST_decoder --data custom \
+  --root_path ./dataset/ --data_path weather.csv \
+  --features M --seq_len 336 --pred_len 96 \
+  --e_layers 3 --n_heads 8 --d_model 128 --d_ff 256 \
+  --dropout 0.3 --fc_dropout 0.3 --head_dropout 0.0 \
+  --batch_size 128 --learning_rate 0.0001 \
+  --alignment 0 \
+  --decoder_layers 1 --head_type patch_wise
 
 # Chronos2_head (frozen Chronos2 encoder + prediction head)
 # --chronos_embed_type past:    past tokens + Flatten_Head (pred_len=96: ~172K with proj_down)
@@ -84,9 +99,9 @@ Or use shell scripts:
 sh ./scripts/PatchTST.sh              # Baseline
 sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise_cos)
-sh ./scripts/Chronos2_REPA_Fusion.sh  # PatchTST_REPA_Fusion + Chronos (none mode)
 sh ./scripts/Chronos2_FutureAlign.sh  # PatchTST_future_align (joint distillation)
-sh ./scripts/Chronos2_FeatureHead.sh  # Chronos2_head (future + proj_down)
+sh ./scripts/Chronos2_Decoder.sh      # PatchTST_decoder (FutureQueryDecoder)
+sh ./scripts/Chronos2_featureHead.sh  # Chronos2_head (future + proj_down)
 sh ./scripts/Chronos2_zeroshot.sh    # Chronos2 direct inference (no training)
 sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no training)
 ```
@@ -96,9 +111,53 @@ sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no tr
 ### Five Models
 1. `PatchTST` - Original PatchTST (baseline)
 2. `PatchTST_REPA` - PatchTST + Linear Projector + contrastive loss (外部 FM 对齐)
-3. `PatchTST_REPA_Fusion` - PatchTST + Patch Fusion branch + contrastive loss
-4. `PatchTST_future_align` - Joint distillation: student encoder + Chronos2 future teacher
+3. `PatchTST_future_align` - Joint distillation: student encoder + optional Chronos2 future teacher (λ=0 → no Chronos2)
+4. `PatchTST_decoder` - FutureQueryDecoder + Chronos2 distillation（encoder → cross-attn decoder → PatchwiseHead）
 5. `Chronos2_head` - Chronos2 (frozen) + prediction head
+
+### PatchTST_decoder Architecture
+
+**动机**：`PatchTST_future_align` 直接对齐 `z_enc`（past-oriented）与 `z_teacher`（future-oriented），表示空间 gap 大。`PatchTST_decoder` 在 encoder 和 head 之间插入 **FutureQueryDecoder**（cross-attention），由 `output_patch_num` 个可学习 query 从过去 encoder token 中查询未来信息，生成 `z_future`（future-oriented）。
+
+**两种模式**（由 `--alignment` 控制）：
+- **Distillation 模式**（`--alignment 1`）：加载 Chronos2 作为 teacher，对齐 `z_future ↔ z_teacher`
+- **独立模式**（`--alignment 0`）：**不加载 Chronos2**，纯 FutureQueryDecoder 预测，可作为轻量级 baseline
+
+**数据流**（seq_len=336, pred_len=96: patch_num=21, output_patch_num=6）：
+
+```
+Student path (always):
+x_past  → TSTiEncoder → z_enc: (bs, nvars, d_model, 21)
+                             ↓ reshape: (bs*nvars, 21, d_model)
+learned queries (6, d_model) → FutureQueryDecoder (cross-attn) → z_future_flat: (bs*nvars, 6, d_model)
+                             ↓ reshape: (bs, nvars, 6, d_model)
+                             ↓ permute: (bs, nvars, d_model, 6)
+                             ↓ PatchwiseHead → pred_s: (bs, nvars, pred_len)
+                             ↓ RevIN denorm → (bs, pred_len, nvars)
+
+Teacher path (only when --alignment 1):
+x_future → Chronos2 (frozen) → z_chron: (bs, nvars, 6, 768)
+                             ↓ proj_down (768→d_model) → z_teacher: (bs, nvars, 6, d_model)
+                             ↓ teacher_head → pred_t → denorm with x_future loc/scale
+
+Alignment loss (distillation mode only): z_future ↔ z_teacher (cosine + MSE)
+```
+
+**推理时**：Chronos2 完全不参与，只走 student 路径。
+
+**FutureQueryDecoder 结构**（`layers/PatchTST_Decoder_backbone.py`）：
+- `future_queries`: `nn.Parameter(output_patch_num, d_model)` — 可学习未来位置查询
+- 每层：`cross_attn(Q=queries, K=z_enc, V=z_enc)` + FFN + LayerNorm × 2
+- 参数量（d_model=128, n_heads=8, d_ff=256, output_patch_num=6, n_layers=1）：~133K
+
+**Patch 设置**（Chronos2 native patch_size=16）：
+```
+output_patch_num = pred_len // 16   (e.g., 96//16=6)
+patch_len = 16                      (Chronos2 native)
+stride = 16                         (no overlap)
+patch_num = seq_len // 16           (e.g., 336//16=21)
+→ FutureQueryDecoder maps 21 past patches → 6 future patches
+```
 
 ### Chronos2_head Architecture
 
@@ -160,7 +219,7 @@ Output: (bs, pred_len, nvars) - denormalized
 
 ### Chronos2 Feature Extraction in REPA Models
 
-Both `PatchTST_REPA` and `PatchTST_REPA_Fusion` use `Chronos2Pipeline.embed(batch_x)` to extract **past encoder tokens** as `zs_tilde`. Past tokens are bidirectionally contextualized (T5 encoder)，与 PatchTST 双向 attention 的表示空间更匹配。
+`PatchTST_REPA` uses `Chronos2Pipeline.embed(batch_x)` to extract **past encoder tokens** as `zs_tilde`. Past tokens are bidirectionally contextualized (T5 encoder)，与 PatchTST 双向 attention 的表示空间更匹配。
 
 ```
 batch_x: (bs, seq_len, nvars)
@@ -172,24 +231,31 @@ batch_x: (bs, seq_len, nvars)
 
 - `num_past = seq_len // 16`（seq_len=336 时为 21）
 - 与 `PatchTST_REPA`（stride=16，patch_num=21）完全匹配，可用 `patch_wise_cos` 对齐
-- `PatchTST_REPA_Fusion` none 模式：对齐目标改为 `chronos.embed(batch_y)`（未来序列）
 
 ### Key Components
-- **`build_linear(hidden_size, z_dim)`**: 单层 Linear，用于 `alignment_mlp`（取代原来的 2 层 MLP，强迫 encoder 自己做对齐）
+
+**`layers/PatchTST_backbone.py`**：
+- **`build_linear(hidden_size, z_dim)`**: 单层 Linear，用于 `alignment_mlp`
 - **`build_mlp(hidden_size, z_dim, projected_dim=256)`**: 2 层 MLP（Linear→SiLU→Linear），保留备用
-- **Patch_Fusion_MLP**: 联合投影 `d_model*patch_num → d_model*output_patch_num`（`fusion_MLP` 模式）
-- **`nn.Linear(patch_num, output_patch_num)`**: `split_MLP` 模式直接内联，仅投影时间维度，参数极少（~258）
-- **`none` 模式**: 无 fusion MLP，`patch_len` 自动推导为 `seq_len // output_patch_num`，patch_num 天然等于 output_patch_num
-- **TransformerDecoder**: patch fusion 后对 `(bs*nvars, output_patch_num, d_model)` 做自注意力，`d_ff` 与 backbone 一致
-- **alignment_mlp**: `build_linear(d_model, d_extractor)`，将 encoder 输出投影到特征提取器空间用于对比损失
-- **PatchwiseHead**: Lightweight head using shared ResidualBlock per patch
+- **`alignment_mlp`**: `build_linear(d_model, d_extractor)`，将 encoder 输出投影到特征提取器空间用于对比损失
+- **`PatchwiseHead`**: Lightweight head，每个 patch 独立经过共享 ResidualBlock（d_model→d_ff→output_patch_size）
+- **`Flatten_Head`**: 标准全局预测头，Linear(d_model×patch_num → pred_len)
+- **`Quantile_Head`**: 分位数预测头
 
-### alignment_mlp 规范
-两种模式均使用 `build_linear(d_model, d_extractor)`（单层 Linear）：
-- `PatchTST_REPA`（无 fusion）：输入 `(bs*nvars*patch_num, d_model)` → 输出 `(bs*nvars*patch_num, d_extractor)`
-- `PatchTST_REPA_Fusion`：输入 `(bs*nvars*output_patch_num, d_model)` → 输出 `(bs*nvars*output_patch_num, d_extractor)`
+**`layers/PatchTST_Decoder_backbone.py`**：
+- **`FutureQueryDecoderLayer`**: cross-attention（Q=learned queries，KV=encoder tokens）+ FFN + LayerNorm
+- **`FutureQueryDecoder`**: n_layers 个 DecoderLayer + `output_patch_num` 个可学习 query 参数
+- **`PatchTST_Decoder_backbone`**: encoder + FutureQueryDecoder + proj_down + head/teacher_head，提供 `forward_student` / `forward_teacher` 接口
 
-`d_extractor` 由特征提取器决定（Mantis=256，Chronos2/TiViT=768）。单层 Linear 相比 2 层 MLP 强迫 encoder 本身做更多对齐工作，避免 projector 吸收所有对齐梯度。
+**`layers/PatchTST_FutureAlign_backbone.py`**：
+- **`PatchTST_FutureAlign_backbone`**: encoder → 直接 head（无 cross-attention decoder），提供相同接口
+
+### alignment_mlp 规范（PatchTST_REPA）
+
+使用 `build_linear(d_model, d_extractor)`（单层 Linear）：
+- 输入 `(bs*nvars*patch_num, d_model)` → 输出 `(bs*nvars*patch_num, d_extractor)`
+
+`d_extractor` 由特征提取器决定（Mantis=256，Chronos2/TiViT=768）。
 
 ### Contrastive Loss Types
 - `mean_pool`: mean pooling 后做 cosine similarity
@@ -198,7 +264,7 @@ batch_x: (bs, seq_len, nvars)
 
 ### Head Types
 - `flatten`: Flatten_Head (standard)，所有模型均支持
-- `patch_wise`: PatchwiseHead，**仅 `PatchTST_REPA_Fusion` 和 `Chronos2_head` 支持**
+- `patch_wise`: PatchwiseHead，支持 `PatchTST_decoder`（推荐）和 `Chronos2_head`
 - `quantile`: Quantile_Head for probabilistic forecasting
 
 ### PatchwiseHead 适用条件（重要观察）
@@ -209,9 +275,8 @@ PatchwiseHead 对每个 output patch 独立预测，其成立前提是：**laten
 |------|----------------------|------|
 | `Chronos2_head future` | **有效** | `Chronos.embed(x_future)` 的 patch i 直接编码未来第 i 段，局部独立假设成立 |
 | `Chronos2_head predict` | **有效** | model.encode 输出的 future tokens 同样按未来时序排列 |
-| `PatchTST_REPA_Fusion` | **效果差** | encoder 输出的是过去信息，TransformerDecoder 仅做自注意力（无 cross-attention），output patch i 不保证对应未来第 i 段 |
-
-**结论**：`Chronos2_head` 场景本质是从已知未来表征中 decode（easy），`PatchTST_REPA_Fusion` 是从过去预测未来（hard）。后者 Flatten_Head 更优，因为它将所有 patch 拼接后全局预测，允许 head 自己学到跨 patch 的混合来弥补局部对齐不足。
+| `PatchTST_decoder` | **有效（设计目标）** | FutureQueryDecoder query i 通过 cross-attention 专注于未来第 i 段，经 Chronos2 distillation 监督后更对齐 |
+| `PatchTST_future_align` | **效果差** | encoder 输出的是过去信息，z_enc patch i 不对应未来第 i 段，Flatten_Head 更优 |
 
 ### PatchTST-FM-R1 (Zero-shot Baseline)
 
@@ -231,20 +296,6 @@ pip install git+https://github.com/ibm-granite/granite-tsfm.git@patchtst-fm
 pip install torch==你原来的版本   # 安装时 torch 会被降级，忽略 torch<2.9 冲突警告
 ```
 
-**架构**：
-```
-输入 (B, T)
-  ↓ RevIN + asinh 归一化
-  ↓ Patching: T/16 个 patch，每 patch 拼接 inv_mask → (32,)
-  ↓ in_layer ResidualBlock: 32 → d_model
-  ↓ Learned Positional Embedding
-  ↓ TransformerBlock × n_layer          ← encoder hidden state 在此
-  ↓ out_layer ResidualBlock: d_model → 16×100（预测头）
-  ↓ softplus + cumsum → 99 个单调分位数
-  ↓ RevIN 逆变换
-输出 (B, 99, pred_len)
-```
-
 **提取 Hidden State**：
 ```python
 hidden = {}
@@ -254,76 +305,59 @@ handle.remove()
 # hidden["h"] shape: (B, n_patch, d_model)，seq_len=336 时为 (B, 21, 384)
 ```
 
-### Output Shapes
-- PatchTST: `(batch, pred_len, nvars)`
-- PatchTST_REPA_Fusion: `(batch, pred_len, nvars)` + `(batch, nvars, output_patch_num, d_extractor)` for contrastive loss
-
 ## Key Hyperparameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `model` | PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion / PatchTST_future_align / Chronos2_head | - |
-| `patch_fusion_type` | fusion_MLP (joint) / split_MLP (separable) / none (auto patch_len) | fusion_MLP |
-| `contrastive` | Enable contrastive learning loss (1/0) | auto |
-| `feature_extractor` | tivit / mantis / chronos | mantis |
+| `model` | PatchTST / PatchTST_REPA / PatchTST_future_align / PatchTST_decoder / Chronos2_head | - |
+| `alignment` | Enable alignment/distillation (1/0). REPA: load FM align; FutureAlign/Decoder: load Chronos2 | auto |
+| `alignment_type` | mean_pool / patch_wise_cos / patch_wise_mse | mean_pool |
+| `lambda_alignment` | Alignment loss weight (REPA models) | 0.5 (推荐 0.1) |
+| `feature_extractor` | REPA only: tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
-| `lambda_contrastive` | Contrastive loss weight (REPA models) | 0.5 (推荐 0.1) |
-| `contrastive_type` | mean_pool / patch_wise_cos / patch_wise_mse | mean_pool |
 | `chronos_embed_type` | Chronos2_head: past / predict / future | past |
 | `proj_down` | Chronos2_head (future mode): 1=add Linear(768→d_model) before head | 0 |
-| `lambda_t` | future_align: 教师路径预测损失权重 (Loss②, Phase 1 warmup) | 0.5 |
-| `lambda_t2` | future_align: 教师路径预测损失权重 (Loss②, Phase 2) | 0.1 |
-| `lambda_a` | future_align: 对齐损失权重 (Loss③, patch-wise cosine) | 0.5 |
-| `align_warmup_epochs` | future_align: Phase 1 teacher-only warmup epoch 数 | 5 |
+| `lambda_t` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 1 warmup) | 0.5 |
+| `lambda_t2` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 2) | 0.1 |
+| `lambda_a` | future_align/decoder: 对齐损失权重 (Loss③) | 0.5 |
+| `align_warmup_epochs` | future_align/decoder: Phase 1 teacher-only warmup epoch 数 | 5 |
+| `decoder_layers` | PatchTST_decoder: FutureQueryDecoder cross-attention 层数 | 1 |
 
 ## Parameter Comparison
 
-### PatchTST_REPA_Fusion (split_MLP, d_model=128, seq_len=336, pred_len=96, nvars=21)
+### 各模型规模对比 (d_model=128, seq_len=336, pred_len=96, nvars=7)
+
+| Model | 主要模块 | TOTAL trainable |
+|-------|---------|----------------|
+| PatchTST (patch_len=16, stride=8) | encoder + Flatten_Head | ~921K |
+| PatchTST_REPA | encoder + alignment_mlp(98K) + Flatten_Head | ~510K |
+| PatchTST_future_align | encoder + proj_down(98K) + head + teacher_head | ~400K |
+| PatchTST_decoder | encoder + FutureQueryDecoder(133K) + proj_down(98K) + head + teacher_head | ~525K |
+
+### PatchTST_decoder 参数规模 (d_model=128, n_heads=8, d_ff=256, seq_len=336, pred_len=96)
+
+patch 设置：patch_len=16, stride=16 → patch_num=21 (336//16)，output_patch_num=6 (96//16)
 
 | Module | Params |
 |--------|-------:|
-| backbone (encoder) | 272,514 |
-| patch_fusion_mlp (`nn.Linear(42,6)`) | 258 |
-| transformer_decoder (d_ff=256) | 132,480 |
-| alignment_mlp (`build_linear(128→768)`) | 98,304 |
-| head (Flatten_Head) | 73,824 |
-| revin_layer | 42 |
-| **TOTAL** | **~577K** |
+| TSTiEncoder (e_layers=3) | ~273K |
+| FutureQueryDecoder (decoder_layers=1) | ~133K |
+| proj_down (768→128) | 98,304 |
+| PatchwiseHead (student) | ~11K |
+| PatchwiseHead (teacher) | ~11K |
+| RevIN | 14 |
+| **TOTAL** | **~525K** |
 
-### PatchTST_REPA_Fusion (none, d_model=128, seq_len=336, pred_len=96, nvars=7)
-
-patch_len 自动推导 = 336//6 = 56，patch_num = output_patch_num = 6，对齐目标为 chronos.embed(batch_y)（未来序列 6 tokens）。
+### PatchTST_future_align 参数规模 (d_model=128, seq_len=336, pred_len=96)
 
 | Module | Params |
 |--------|-------:|
-| backbone (encoder_depth layers, patch_len=56) | ~273K |
-| patch_fusion_mlp | 0 |
-| transformer_decoder (d_ff=256) | 132,480 |
-| alignment_mlp (`build_linear(128→768)`) | 98,304 |
-| head (Flatten_Head) | 73,824 |
-| revin_layer | 14 |
-| **TOTAL** | **~577K** |
-
-### 各模型规模对比 (d_model=128, seq_len=336, pred_len=96)
-
-| Model | alignment_mlp | TOTAL |
-|-------|--------------|-------|
-| PatchTST | - | ~921K |
-| PatchTST_REPA | 98K (Linear 128→768) | ~510K |
-| PatchTST_REPA_Fusion (fusion_MLP) | 98K | ~1.1M |
-| PatchTST_REPA_Fusion (split_MLP) | 98K | ~577K |
-| PatchTST_REPA_Fusion (none) | 98K | ~577K |
-
-### PatchTST 参数规模 (seq_len=336, pred_len=96, e_layers=3, patch_len=16)
-
-| enc_in | d_model | d_ff | n_heads | stride | patch_num | backbone | head | TOTAL |
-|--------|---------|------|---------|--------|-----------|----------|------|-------|
-| 21 | 128 | 256 | 16 | 8 | 42 | 404,995 | 516,192 | ~921K |
-| 21 | 16 | 64 | 4 | 8 | 42 | 10,787 | 64,608 | ~75K |
-| 21 | 16 | 128 | 4 | 8 | 42 | 17,123 | 64,608 | ~82K |
-| 7 | 16 | 128 | 4 | 16 | 22 | 16,803 | 33,888 | ~51K |
-
-head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小，head 参数越少。
+| TSTiEncoder (e_layers=3) | ~273K |
+| proj_down (768→128) | 98,304 |
+| Student Head (Flatten_Head) | ~73K |
+| Teacher Head (Flatten_Head) | ~73K |
+| RevIN | 14 |
+| **TOTAL** | **~518K** |
 
 ### Chronos2_head 参数规模
 
@@ -332,11 +366,8 @@ head = `Linear(d_model × patch_num, pred_len)`，stride 越大 patch_num 越小
 | past | 96 | Flatten_Head(768×21→96) | ~1.55M |
 | past | 720 | Flatten_Head(768×21→720) | ~11.6M |
 | predict | any | PatchwiseHead，固定 | ~314K |
-| future | 96 | Flatten_Head(768×6→96) | ~4.7M |
 | future + proj_down | 96 | Linear(768→128) + Flatten_Head(128×6→96) | ~172K |
 | future + proj_down | 720 | Linear(768→128) + Flatten_Head(128×45→720) | ~4.25M |
-
-`alignment_mlp` 从 2 层 MLP（128→256→768，230K）简化为单层 Linear（128→768，98K），强迫 encoder 自己做对齐。
 
 ## Latent Space Quality Evaluation
 
@@ -375,65 +406,70 @@ LatentTSF（ICML，arXiv:2602.00297）提出了 **Latent Chaos** 概念：MSE �
 - 标准模型 latent TL ≈ 94.03（混乱 7×）
 - 损失函数：`ℒ = α·ℒ_Pred + β·ℒ_Align`，α=10，β=15
 
-## PatchTST_future_align 设计细节与实验观察
+## Distillation 模型设计细节
 
-### Normalization 设计
+### Normalization 设计（future_align 和 decoder 共用，distillation mode only）
 
 | Path | Denorm 使用的统计量 | 原因 |
 |------|-------------------|------|
 | Student path | RevIN(x_past) loc/scale | 推理时无法获得 x_future，必须用 past |
-| Teacher path (training only) | Chronos2.embed(x_future) 返回的 loc/scale | Teacher 只在训练时用，x_future 此时可用；与 Chronos2 内部归一化自洽，Loss② 收敛快 |
-| Chronos2_head (future mode) | RevIN(x_past, affine=False) | 与 FutureAlign student path 保持一致；affine=False 与 PatchTST 默认值一致 |
+| Teacher path (distillation mode) | Chronos2.embed(x_future) 返回的 loc/scale | 与 Chronos2 内部归一化自洽，Loss② 收敛快 |
 
 **关键点**：如果 teacher path 也用 RevIN(x_past) 做 denorm，则 teacher 在有趋势的序列上会遇到 per-sample scale mismatch（future 和 past 的均值不同），导致 Loss② 收敛显著变慢。
 
-### Alignment Loss（Loss③）
-
-使用 **patch-wise cosine similarity**（与 REPA 的 `patch_wise_cos` 完全一致）：
+### Alignment Loss（Loss③，两个模型相同）
 
 ```python
-z_enc_n = F.normalize(z_enc, dim=-1)          # (bs, nvars, patch_num, d_model)
+z_n = F.normalize(z, dim=-1)           # z_future 或 z_enc: (bs, nvars, patch_num, d_model)
 z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-loss_align = -(z_enc_n * z_tea_n).sum(dim=-1).mean()  # range [-1, 1]，越负越对齐
+loss_cosine = -(z_n * z_tea_n).sum(dim=-1).mean()   # range [-1, 1]，越负越对齐
+loss_mse_align = F.mse_loss(z, z_teacher.detach())
+loss_align = loss_cosine + loss_mse_align
 ```
 
-- Scale-invariant：student MSE 处理 scale，alignment 只对齐方向
-- 打印的 Align loss 为负数，越接近 -1 说明对齐越好
+对齐在 d_model 空间（通过 `proj_down: Linear(768→d_model)` 把 Chronos teacher 投影到 student 空间）。
 
-### 实验观察
+### 训练阶段
 
-**FutureAlign vs 原始 PatchTST（ETTh1，pred_len=336）**：
-- MSE 提升有限（0.430 → 0.427），未达到显著改善
-- **但**：FutureAlign 在相同超参数下不易过拟合，val loss 曲线更稳定
-- Warmup 后 encoder 收敛更快，能在更少 epoch 内到达 minimizer
+| Phase | 条件 | 激活的 Loss |
+|-------|------|------------|
+| Phase 1 (warmup) | epoch < align_warmup_epochs | λ_t × Loss② (teacher MSE only) |
+| Phase 2 (align) | epoch ≥ align_warmup_epochs | Loss① + λ_t2 × Loss② + λ_a × Loss③ |
 
-**为什么 MSE 提升有限**：
-1. 根本矛盾：z_teacher 编码 x_future（真实未来），z_enc 只能看 x_past；cosine alignment 要求 encoder "预知未来"
-2. proj_down 在 Phase 2 仍通过 Loss② 更新，z_teacher 是移动靶
-3. 朴素 cosine 对齐未考虑 past/future 表示的系统性分布偏移
+### future_align vs decoder 的核心差异
+
+| 对比项 | PatchTST_future_align | PatchTST_decoder |
+|--------|----------------------|-----------------|
+| 对齐 student 端 | z_enc（encoder 直接输出，past-oriented） | z_future（FutureQueryDecoder 输出，future-oriented） |
+| 对齐 gap | 大（past ↔ future） | 小（future ↔ future） |
+| 推荐 head_type | flatten（全局混合更优） | patch_wise（局部对齐语义成立） |
+| 额外参数 | 无 | FutureQueryDecoder ~133K |
+| `--alignment 0` | 纯 encoder → head（不加载 Chronos2） | 纯 encoder + decoder → head（不加载 Chronos2） |
 
 **与 TimeAlign 的对比**（arXiv:2509.14181）：
-TimeAlign 使用 **distribution-aware alignment loss**，显式建模 past/future 表示分布的统计差异，而非逐 sample 点对点对齐。这解释了为什么 TimeAlign 有 MSE 提升而朴素 cosine 对齐效果有限——后者梯度中包含大量"不可预测未来"的噪声成分，distribution-aware 方法在分布层面平滑了这些噪声。
-
-**FutureAlign 真正的价值**：正则化效果——alignment loss 约束 encoder 表示空间，防止过拟合训练集特定模式，提升泛化稳定性。
+TimeAlign 使用 **distribution-aware alignment loss**，显式建模 past/future 表示分布的统计差异。朴素 cosine 对齐梯度中包含大量"不可预测未来"的噪声，distribution-aware 方法在分布层面平滑了这些噪声。`PatchTST_decoder` 通过 cross-attention 使 z_future 主动 query 未来信息，从架构层面减少噪声。
 
 ## Directory Structure
 
 ```
 PatchTST_REPA/
-├── run_longExp.py              # Main entry point
+├── run_longExp.py                      # Main entry point
 ├── layers/
-│   ├── PatchTST_backbone.py   # Core model (build_linear, build_mlp, Patch_Fusion_MLP, TransformerDecoder, Flatten_Head, PatchwiseHead)
+│   ├── PatchTST_backbone.py           # Core backbone (TSTiEncoder, Flatten_Head, PatchwiseHead, alignment_mlp)
+│   ├── PatchTST_FutureAlign_backbone.py  # PatchTST_future_align backbone
+│   ├── PatchTST_Decoder_backbone.py   # PatchTST_decoder backbone (FutureQueryDecoder)
 │   ├── PatchTST_layers.py
 │   ├── RevIN.py
 │   └── Tivit.py
 ├── models/
-│   ├── PatchTST.py            # PatchTST / PatchTST_REPA / PatchTST_REPA_Fusion
-│   ├── Chronos2_head.py       # Chronos2 (frozen) + Flatten/Patchwise head; supports proj_down
-│   ├── Chronos2_zeroshot.py   # Chronos2 direct inference test (no training)
-│   └── PatchTST_FM_zeroshot.py # PatchTST-FM-R1 zero-shot inference test (no training)
+│   ├── PatchTST.py                    # PatchTST / PatchTST_REPA
+│   ├── PatchTST_future_align.py       # Joint distillation (encoder → head)
+│   ├── PatchTST_decoder.py            # FutureQueryDecoder distillation
+│   ├── Chronos2_head.py               # Chronos2 (frozen) + Flatten/Patchwise head
+│   ├── Chronos2_zeroshot.py           # Chronos2 direct inference test (no training)
+│   └── PatchTST_FM_zeroshot.py        # PatchTST-FM-R1 zero-shot inference test (no training)
 ├── exp/
-│   └── exp_main.py            # Training & evaluation
-├── scripts/                    # Training scripts
-└── dataset/                    # Data files (not tracked in git)
+│   └── exp_main.py                    # Training & evaluation
+├── scripts/                            # Training scripts
+└── dataset/                            # Data files (not tracked in git)
 ```

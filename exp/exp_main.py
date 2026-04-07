@@ -3,6 +3,7 @@ from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
 import models.Chronos2_head as Chronos2_head_module
 import models.PatchTST_future_align as PatchTST_future_align_module
+import models.PatchTST_decoder as PatchTST_decoder_module
 from utils.tools import adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -67,20 +68,20 @@ class Exp_Main(Exp_Basic):
         model = self.model
         model_name = self.args.model
 
-        # PatchTST_future_align: backbone + Chronos2
-        if model_name == 'PatchTST_future_align':
+        # PatchTST_future_align / PatchTST_decoder: backbone + Chronos2
+        if model_name in ['PatchTST_future_align', 'PatchTST_decoder']:
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
             bb = model.backbone
-            encoder_total = sum(p.numel() for p in bb.backbone.parameters())
-            proj_down_total = sum(p.numel() for p in bb.proj_down.parameters())
-            head_total = sum(p.numel() for p in bb.head.parameters())
+            encoder_total      = sum(p.numel() for p in bb.backbone.parameters())
+            proj_down_total    = sum(p.numel() for p in bb.proj_down.parameters())
+            head_total         = sum(p.numel() for p in bb.head.parameters())
             teacher_head_total = sum(p.numel() for p in bb.teacher_head.parameters())
-            revin_total = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
-            all_total = sum(p.numel() for p in model.parameters())
-            all_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            revin_total        = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
+            all_total          = sum(p.numel() for p in model.parameters())
+            all_trainable      = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
             print(f"\nModel Configuration:")
-            print(f"  Model:           PatchTST_future_align")
+            print(f"  Model:           {model_name}")
             print(f"  head_type:        {bb.head_type}")
             print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
             print(f"  output_patch_num: {bb.output_patch_num}")
@@ -91,9 +92,12 @@ class Exp_Main(Exp_Basic):
 
             print(f"\nModule Parameters:")
             print(f"  Encoder:                           {encoder_total:,}")
+            if model_name == 'PatchTST_decoder':
+                fqd_total = sum(p.numel() for p in bb.future_query_decoder.parameters())
+                print(f"  FutureQueryDecoder:                {fqd_total:,}")
             print(f"  proj_down (768→d_model):           {proj_down_total:,}")
-            print(f"  Student Flatten_Head:              {head_total:,}")
-            print(f"  Teacher Flatten_Head:              {teacher_head_total:,}")
+            print(f"  Student Head:                      {head_total:,}")
+            print(f"  Teacher Head:                      {teacher_head_total:,}")
             print(f"  RevIN:                             {revin_total:,}")
             print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
             print("=" * 60)
@@ -137,7 +141,6 @@ class Exp_Main(Exp_Basic):
 
         # Get head info
         head_type = type(model_backbone.head).__name__ if model_backbone and hasattr(model_backbone, 'head') else 'None'
-        use_patch_fusion = model_backbone.use_patch_fusion if model_backbone and hasattr(model_backbone, 'use_patch_fusion') else False
 
         # Total parameters
         all_total = sum(p.numel() for p in model.parameters())
@@ -146,7 +149,6 @@ class Exp_Main(Exp_Basic):
         print(f"\nModel Configuration:")
         print(f"  Model:           {model_name}")
         print(f"  Head type:       {head_type}")
-        print(f"  Patch fusion:    {use_patch_fusion}")
 
         # Detect feature extractor
         feature_extractor = None
@@ -175,26 +177,10 @@ class Exp_Main(Exp_Basic):
             bb_total = sum(p.numel() for p in model_backbone.backbone.parameters())
             print(f"  Backbone (encoder):    {bb_total:,}")
 
-        # Projector
-        if model_name == 'PatchTST_REPA':
-            # PatchTST_REPA uses alignment_mlp for contrastive learning
-            if hasattr(model_backbone, 'alignment_mlp') and model_backbone.alignment_mlp is not None:
-                proj_total = sum(p.numel() for p in model_backbone.alignment_mlp.parameters())
-                print(f"  AlignmentMLP:          {proj_total:,}")
-        elif model_name == 'PatchTST_REPA_Fusion':
-            # PatchTST_REPA_Fusion uses AlignmentMLP for contrastive learning
-            if hasattr(model_backbone, 'alignment_mlp') and model_backbone.alignment_mlp is not None:
-                proj_total = sum(p.numel() for p in model_backbone.alignment_mlp.parameters())
-                print(f"  AlignmentMLP:          {proj_total:,}")
-
-        # Patch Fusion components
-        if use_patch_fusion:
-            if hasattr(model_backbone, 'patch_fusion_mlp') and model_backbone.patch_fusion_mlp is not None:
-                cf_mlp_total = sum(p.numel() for p in model_backbone.patch_fusion_mlp.parameters())
-                print(f"  PatchFusionMLP:        {cf_mlp_total:,}")
-            if hasattr(model_backbone, 'transformer_decoder') and model_backbone.transformer_decoder is not None:
-                td_total = sum(p.numel() for p in model_backbone.transformer_decoder.parameters())
-                print(f"  TransformerDecoder:   {td_total:,}")
+        # Projector (AlignmentMLP for PatchTST_REPA)
+        if hasattr(model_backbone, 'alignment_mlp') and model_backbone.alignment_mlp is not None:
+            proj_total = sum(p.numel() for p in model_backbone.alignment_mlp.parameters())
+            print(f"  AlignmentMLP:          {proj_total:,}")
 
         # Head
         if model_backbone and hasattr(model_backbone, 'head'):
@@ -221,18 +207,16 @@ class Exp_Main(Exp_Basic):
             'NLinear': NLinear,
             'Linear': Linear,
             'PatchTST': PatchTST,
-            'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + contrastive loss)
-            'PatchTST_REPA_Fusion': PatchTST,  # PatchTST with channel fusion branch
+            'PatchTST_REPA': PatchTST,  # PatchTST with feature alignment (projector + alignment loss)
             'Chronos2_head': Chronos2_head_module,  # Chronos2 (frozen) + Flatten_Head
             'PatchTST_future_align': PatchTST_future_align_module,  # Joint distillation: Encoder + Chronos2 teacher
+            'PatchTST_decoder': PatchTST_decoder_module,            # FutureQueryDecoder + Chronos2 distillation
         }
 
         # Print model info based on model_name
         if self.args.model == 'PatchTST_REPA':
-            contrastive = getattr(self.args, 'contrastive', None) or 1
-            print(f"\n>>> Using PatchTST_REPA: contrastive={contrastive} + contrastive loss")
-        elif self.args.model == 'PatchTST_REPA_Fusion':
-            print(f"\n>>> Using PatchTST_REPA_Fusion: channel fusion branch (always enabled)")
+            alignment = getattr(self.args, 'alignment', None) or 1
+            print(f"\n>>> Using PatchTST_REPA: alignment={alignment} + alignment loss")
         elif self.args.model == 'Chronos2_head':
             embed_type = getattr(self.args, 'chronos_embed_type', 'past')
             head_type = getattr(self.args, 'head_type', 'flatten')
@@ -243,10 +227,10 @@ class Exp_Main(Exp_Basic):
             else:
                 head_name = 'Flatten_Head (past tokens)'
             print(f"\n>>> Using Chronos2_head: Chronos2 (frozen) + {head_name}, embed_type={embed_type}")
-        elif self.args.model == 'PatchTST_future_align':
+        elif self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
             lambda_t = getattr(self.args, 'lambda_t', 0.5)
             lambda_a = getattr(self.args, 'lambda_a', 0.1)
-            print(f"\n>>> Using PatchTST_future_align: joint distillation (λ_t={lambda_t}, λ_a={lambda_a})")
+            print(f"\n>>> Using {self.args.model}: joint distillation (λ_t={lambda_t}, λ_a={lambda_a})")
         else:
             print(f"\n>>> Using {self.args.model}: original PatchTST")
 
@@ -273,24 +257,24 @@ class Exp_Main(Exp_Basic):
             criterion = nn.MSELoss()
         return criterion
 
-    def _compute_contrastive_loss(self, zs_project, zs_tilde):
+    def _compute_alignment_loss(self, zs_project, zs_tilde):
         """
-        Compute contrastive loss between projected features and TiViT/Mantis/Chronos features.
+        Compute alignment loss between projected features and TiViT/Mantis/Chronos features.
 
         Args:
             zs_project: (bs, nvars, patch_num, d_proj) - PatchTST projected features
             zs_tilde: (bs, nvars, d_vit) for TiViT/Mantis, or (bs, nvars, num_patches, d_vit) for Chronos
 
         Returns:
-            loss: scalar contrastive loss
+            loss: scalar alignment loss
         """
-        contractive_type = getattr(self.args, 'contrastive_type', 'mean_pool')
+        alignment_type = getattr(self.args, 'alignment_type', 'mean_pool')
 
-        if zs_tilde.dim() == 4 and contractive_type == 'patch_wise_mse':
+        if zs_tilde.dim() == 4 and alignment_type == 'patch_wise_mse':
             # patch_wise_mse: MSE loss per patch per nvar
             loss = F.mse_loss(zs_project, zs_tilde.detach())
 
-        elif zs_tilde.dim() == 4 and contractive_type == 'patch_wise_cos':
+        elif zs_tilde.dim() == 4 and alignment_type == 'patch_wise_cos':
             # patch_wise_cos: cosine similarity per patch per nvar
             zs_project = F.normalize(zs_project, dim=-1)
             zs_tilde = F.normalize(zs_tilde, dim=-1)
@@ -393,7 +377,7 @@ class Exp_Main(Exp_Basic):
         # Record loss per step for plotting
         loss_per_step = []
         loss_mse_per_step = []
-        loss_contrastive_per_step = []
+        loss_alignment_per_step = []
 
         train_steps = len(train_loader)
         best_val_loss = float('inf')  # Track best validation loss
@@ -417,7 +401,7 @@ class Exp_Main(Exp_Basic):
             train_loss = []
             train_mse_loss = []
             train_teacher_loss = []
-            train_contrastive_loss = []
+            train_alignment_loss = []
             train_cosine_loss = []
             train_mse_align_loss = []
 
@@ -443,7 +427,7 @@ class Exp_Main(Exp_Basic):
                         if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # Slice target to pred_len for feature extraction
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
-                            if hasattr(self.model, 'contrastive') and self.model.contrastive:
+                            if hasattr(self.model, 'alignment') and self.model.alignment:
                                 outputs, _, _ = self.model(batch_x, batch_y_pred, return_projector=True)
                             else:
                                 outputs = self.model(batch_x, batch_y_pred)
@@ -461,9 +445,9 @@ class Exp_Main(Exp_Basic):
                         # Record loss per step
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(loss.item())  # Same as total in AMP mode
-                        loss_contrastive_per_step.append(0.0)
+                        loss_alignment_per_step.append(0.0)
                 else:
-                    if self.args.model == 'PatchTST_future_align':
+                    if self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
                         # ---- Joint Distillation Training ----
                         f_dim = 0 if self.args.features == 'M' else -1
                         batch_y_pred = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
@@ -516,12 +500,12 @@ class Exp_Main(Exp_Basic):
                         train_loss.append(loss.item())
                         train_mse_loss.append(mse_loss.item())
                         train_teacher_loss.append(loss_teacher.item())
-                        train_contrastive_loss.append(loss_align.item())
+                        train_alignment_loss.append(loss_align.item())
                         train_cosine_loss.append(loss_cosine.item())
                         train_mse_align_loss.append(loss_mse_align.item())
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(mse_loss.item())
-                        loss_contrastive_per_step.append(loss_align.item())
+                        loss_alignment_per_step.append(loss_align.item())
 
                     elif 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                         # Chronos2_head: simple forward
@@ -546,7 +530,7 @@ class Exp_Main(Exp_Basic):
                                     align_corners=False
                                 ).permute(0, 2, 1)  # (bs, seq_len, nvars)
 
-                            if hasattr(self.model, 'contrastive') and self.model.contrastive:
+                            if hasattr(self.model, 'alignment') and self.model.alignment:
                                 outputs, zs_project, zs_tilde = self.model(batch_x, batch_y_for_model, return_projector=True)
                             else:
                                 outputs = self.model(batch_x, batch_y_for_model)
@@ -557,7 +541,7 @@ class Exp_Main(Exp_Basic):
                         else:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark, batch_y)
 
-                    if self.args.model != 'PatchTST_future_align':
+                    if self.args.model not in ['PatchTST_future_align', 'PatchTST_decoder']:
                         # Handle quantile head output
                         head_type = getattr(self.args, 'head_type', 'flatten')
                         num_quantiles = getattr(self.args, 'num_quantiles', 20)
@@ -579,21 +563,21 @@ class Exp_Main(Exp_Basic):
                             mse_loss = criterion(outputs, batch_y_pred)
 
                         # Contrastive loss for feature alignment (only when using projector)
-                        contrastive_loss = torch.tensor(0.0, device=self.device)
+                        alignment_loss = torch.tensor(0.0, device=self.device)
                         loss = mse_loss
 
-                        if hasattr(self.model, 'contrastive') and self.model.contrastive:
-                            contrastive_loss = self._compute_contrastive_loss(zs_project, zs_tilde)
-                            loss = loss + self.args.lambda_contrastive * contrastive_loss
+                        if hasattr(self.model, 'alignment') and self.model.alignment:
+                            alignment_loss = self._compute_alignment_loss(zs_project, zs_tilde)
+                            loss = loss + self.args.lambda_alignment * alignment_loss
 
                         train_loss.append(loss.item())
                         train_mse_loss.append(mse_loss.item())
-                        train_contrastive_loss.append(contrastive_loss.item())
+                        train_alignment_loss.append(alignment_loss.item())
 
                         # Record loss per step
                         loss_per_step.append(loss.item())
                         loss_mse_per_step.append(mse_loss.item())
-                        loss_contrastive_per_step.append(contrastive_loss.item())
+                        loss_alignment_per_step.append(alignment_loss.item())
 
                 if (i + 1) % 100 == 0:
                     speed = (time.time() - time_now) / iter_count
@@ -618,7 +602,7 @@ class Exp_Main(Exp_Basic):
             train_loss = np.average(train_loss)
             train_mse_loss = np.average(train_mse_loss)
             train_teacher_loss = np.average(train_teacher_loss) if train_teacher_loss else 0.0
-            train_contrastive_loss = np.average(train_contrastive_loss)
+            train_alignment_loss = np.average(train_alignment_loss)
             train_cosine_loss = np.average(train_cosine_loss) if train_cosine_loss else 0.0
             train_mse_align_loss = np.average(train_mse_align_loss) if train_mse_align_loss else 0.0
             vali_loss = self.vali(vali_data, vali_loader, criterion)
@@ -635,13 +619,13 @@ class Exp_Main(Exp_Basic):
             current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
 
             best_suffix = ' ***' if is_best_update else ''
-            if self.args.model == 'PatchTST_future_align':
+            if self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
                 align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
                 phase = "warmup" if epoch < align_warmup else "align"
                 extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f} (cos={:.4f} mse={:.4f})".format(
-                    phase, train_teacher_loss, train_contrastive_loss, train_cosine_loss, train_mse_align_loss)
-            elif train_contrastive_loss > 1e-8:
-                extra_str = " | Align: {:.5f}".format(train_contrastive_loss)
+                    phase, train_teacher_loss, train_alignment_loss, train_cosine_loss, train_mse_align_loss)
+            elif train_alignment_loss > 1e-8:
+                extra_str = " | Align: {:.5f}".format(train_alignment_loss)
             else:
                 extra_str = ""
             print("Epoch: {} | cost time: {:.3f} | lr: {:.2e} | Steps: {} | Train Loss: {:.5f} | MSE  Train: {:.5f}  Vali: {:.5f}  Test: {:.5f}{}{}".format(
@@ -671,7 +655,7 @@ class Exp_Main(Exp_Basic):
                   steps=np.arange(len(loss_per_step)),
                   loss=np.array(loss_per_step),
                   loss_mse=np.array(loss_mse_per_step),
-                  loss_contrastive=np.array(loss_contrastive_per_step))
+                  loss_alignment=np.array(loss_alignment_per_step))
         print(f"Loss curve saved to {results_folder}loss_per_step.npz")
 
         # Plot and save loss curves
@@ -690,10 +674,10 @@ class Exp_Main(Exp_Basic):
         axes[1].set_title('MSE Loss')
         axes[1].grid(True, alpha=0.3)
 
-        axes[2].plot(steps, loss_contrastive_per_step, 'r-', linewidth=0.5)
+        axes[2].plot(steps, loss_alignment_per_step, 'r-', linewidth=0.5)
         axes[2].set_xlabel('Steps')
-        axes[2].set_ylabel('Contrastive Loss')
-        axes[2].set_title('Contrastive Loss')
+        axes[2].set_ylabel('Alignment Loss')
+        axes[2].set_title('Alignment Loss')
         axes[2].grid(True, alpha=0.3)
 
         plt.suptitle(f'Loss Curves - {setting}')
