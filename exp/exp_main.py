@@ -480,17 +480,16 @@ class Exp_Main(Exp_Basic):
 
                         if use_teacher:
                             if epoch < align_warmup:
-                                # Phase 1: teacher only — student encoder frozen, no MSE, no alignment
-                                # Encoder doesn't train here so alignment can act as regularizer from phase 2 start
-                                pred_student, pred_teacher, z_student, z_teacher = self.model(batch_x)
-                                outputs = pred_student[:, :, f_dim:]
+                                # Phase 1: teacher only — skip student forward entirely
+                                # This makes the warmup identical to Chronos2_head predict mode
+                                pred_teacher = self.model(batch_x, teacher_only=True)
+                                outputs = pred_teacher[:, :, f_dim:]  # Use teacher output as outputs for logging
                                 mse_loss = torch.tensor(0.0, device=self.device)
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                z_stu_n = F.normalize(z_student, dim=-1)
-                                z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
-                                loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
-                                loss_align = loss_cosine + loss_mse_align
+                                # Alignment metrics not computed in Phase 1 (no student)
+                                loss_cosine = torch.tensor(0.0, device=self.device)
+                                loss_mse_align = torch.tensor(0.0, device=self.device)
+                                loss_align = torch.tensor(0.0, device=self.device)
                                 loss = lambda_t * loss_teacher
                             else:
                                 # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
