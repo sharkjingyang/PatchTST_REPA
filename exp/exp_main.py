@@ -70,7 +70,7 @@ class Exp_Main(Exp_Basic):
 
         # PatchTST_future_align / PatchTST_decoder: backbone + Chronos2
         if model_name in ['PatchTST_future_align', 'PatchTST_decoder']:
-            has_chronos = model.chronos_model is not None
+            has_chronos = hasattr(model, 'chronos_model') and model.chronos_model is not None
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters()) if has_chronos else 0
             bb = model.backbone
             encoder_total      = sum(p.numel() for p in bb.backbone.parameters())
