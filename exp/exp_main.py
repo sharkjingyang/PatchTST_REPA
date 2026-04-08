@@ -84,7 +84,10 @@ class Exp_Main(Exp_Basic):
             print(f"\nModel Configuration:")
             print(f"  Model:           {model_name}")
             print(f"  head_type:        {bb.head_type}")
-            print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
+            if model_name == 'PatchTST_decoder':
+                print(f"  patch_len:        {bb.patch_len}  (fixed = Chronos2 native patch size)")
+            else:
+                print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
             print(f"  output_patch_num: {bb.output_patch_num}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
@@ -429,7 +432,13 @@ class Exp_Main(Exp_Basic):
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        if 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
+                        if self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
+                            # Joint distillation models: delegate to the non-AMP path below
+                            # (AMP doesn't change correctness here; skip AMP for simplicity)
+                            raise NotImplementedError(
+                                f"{self.args.model} does not support --use_amp. Remove --use_amp flag."
+                            )
+                        elif 'Linear' in self.args.model or 'TST' in self.args.model or 'Chronos' in self.args.model:
                             # Slice target to pred_len for feature extraction
                             batch_y_pred = batch_y[:, -self.args.pred_len:, :]
                             if hasattr(self.model, 'alignment') and self.model.alignment:
@@ -626,10 +635,14 @@ class Exp_Main(Exp_Basic):
 
             best_suffix = ' ***' if is_best_update else ''
             if self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
-                align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
-                phase = "warmup" if epoch < align_warmup else "align"
-                extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f} (cos={:.4f} mse={:.4f})".format(
-                    phase, train_teacher_loss, train_alignment_loss, train_cosine_loss, train_mse_align_loss)
+                alignment_flag = getattr(self.args, 'alignment', None)
+                if alignment_flag == 0:
+                    extra_str = " | [standalone]"
+                else:
+                    align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
+                    phase = "warmup" if epoch < align_warmup else "align"
+                    extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f} (cos={:.4f} mse={:.4f})".format(
+                        phase, train_teacher_loss, train_alignment_loss, train_cosine_loss, train_mse_align_loss)
             elif train_alignment_loss > 1e-8:
                 extra_str = " | Align: {:.5f}".format(train_alignment_loss)
             else:
