@@ -18,7 +18,7 @@ n_heads=8
 d_ff=256
 
 # FutureQueryDecoder hyperparameters
-decoder_layers=1    # number of cross-attention layers in FutureQueryDecoder
+d_layers=1    # number of cross-attention layers in FutureQueryDecoder
 
 # Distillation settings
 alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chronos2)
@@ -52,7 +52,7 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --decoder_layers $decoder_layers \
+  --d_layers $d_layers \
   --alignment $alignment \
   --lambda_t $lambda_t \
   --lambda_t2 $lambda_t2 \
@@ -60,4 +60,4 @@ python -u run_longExp.py \
   --align_warmup_epochs $align_warmup \
   --head_type $head_type \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_dl${decoder_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_dl${d_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log
