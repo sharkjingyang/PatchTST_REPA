@@ -17,9 +17,6 @@ e_layers=3
 n_heads=8
 d_ff=256
 
-# FutureQueryDecoder hyperparameters
-d_layers=1    # number of cross-attention layers in FutureQueryDecoder
-
 # Distillation settings
 alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chronos2)
 
@@ -27,7 +24,7 @@ alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chro
 lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
 lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
 lambda_a=0.5        # Phase 2: alignment loss weight
-align_warmup=5      # epochs of teacher-only warmup before alignment starts
+align_warmup=5      # epochs of MiniChronos2-only warmup before student MSE starts
 head_type=patch_wise  # patch_wise (recommended) or flatten
 
 python -u run_longExp.py \
@@ -52,7 +49,6 @@ python -u run_longExp.py \
   --des 'Exp' \
   --train_epochs 20 \
   --itr 1 --batch_size 128 --learning_rate 0.0001 \
-  --d_layers $d_layers \
   --alignment $alignment \
   --lambda_t $lambda_t \
   --lambda_t2 $lambda_t2 \
@@ -60,4 +56,4 @@ python -u run_longExp.py \
   --align_warmup_epochs $align_warmup \
   --head_type $head_type \
   --device $device \
-  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_dl${d_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log
+  >logs/${model_name}_${data_name}_sl${seq_len}_pl${pred_len}_dm${d_model}_el${e_layers}_al${alignment}_lt${lambda_t}_lt2${lambda_t2}_la${lambda_a}_aw${align_warmup}_${head_type}.log

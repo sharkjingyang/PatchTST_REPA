@@ -73,11 +73,15 @@ class Exp_Main(Exp_Basic):
             has_chronos = hasattr(model, 'chronos_model') and model.chronos_model is not None
             chronos_total = sum(p.numel() for p in model.chronos_model.parameters()) if has_chronos else 0
             bb = model.backbone
-            encoder_total      = sum(p.numel() for p in bb.backbone.parameters())
+            if model_name == 'PatchTST_decoder':
+                encoder_total = sum(p.numel() for p in bb.mini_encoder.parameters())
+                revin_total   = 0
+            else:
+                encoder_total = sum(p.numel() for p in bb.backbone.parameters())
+                revin_total   = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
             proj_down_total    = sum(p.numel() for p in bb.proj_down.parameters()) if hasattr(bb, 'proj_down') and bb.proj_down is not None else 0
             head_total         = sum(p.numel() for p in bb.head.parameters())
             teacher_head_total = sum(p.numel() for p in bb.teacher_head.parameters()) if hasattr(bb, 'teacher_head') and bb.teacher_head is not None else 0
-            revin_total        = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
             all_total          = sum(p.numel() for p in model.parameters())
             all_trainable      = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -96,16 +100,17 @@ class Exp_Main(Exp_Basic):
             print(f"Trainable parameters:                {all_trainable:,}")
 
             print(f"\nModule Parameters:")
-            print(f"  Encoder:                           {encoder_total:,}")
             if model_name == 'PatchTST_decoder':
-                fqd_total = sum(p.numel() for p in bb.future_query_decoder.parameters())
-                print(f"  FutureQueryDecoder:                {fqd_total:,}")
+                print(f"  MiniChronos2Encoder:               {encoder_total:,}")
+            else:
+                print(f"  Encoder:                           {encoder_total:,}")
             if proj_down_total:
                 print(f"  proj_down (768→d_model):           {proj_down_total:,}")
             print(f"  Student Head:                      {head_total:,}")
             if teacher_head_total:
                 print(f"  Teacher Head:                      {teacher_head_total:,}")
-            print(f"  RevIN:                             {revin_total:,}")
+            if revin_total:
+                print(f"  RevIN:                             {revin_total:,}")
             if has_chronos:
                 print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
             print("=" * 60)
@@ -474,31 +479,29 @@ class Exp_Main(Exp_Basic):
                         use_teacher = (lambda_t > 0 or lambda_a > 0) and (alignment_flag != 0)
 
                         if use_teacher:
-                            future_seq = batch_y[:, -self.args.pred_len:, :]
-
                             if epoch < align_warmup:
                                 # Phase 1: teacher only — student encoder frozen, no MSE, no alignment
                                 # Encoder doesn't train here so alignment can act as regularizer from phase 2 start
-                                pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+                                pred_student, pred_teacher, z_student, z_teacher = self.model(batch_x)
                                 outputs = pred_student[:, :, f_dim:]
                                 mse_loss = torch.tensor(0.0, device=self.device)
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                z_enc_n = F.normalize(z_enc, dim=-1)
+                                z_stu_n = F.normalize(z_student, dim=-1)
                                 z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_cosine = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
-                                loss_mse_align = F.mse_loss(z_enc, z_teacher.detach())
+                                loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
+                                loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
                                 loss_align = loss_cosine + loss_mse_align
                                 loss = lambda_t * loss_teacher
                             else:
                                 # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
-                                pred_student, pred_teacher, z_enc, z_teacher = self.model(batch_x, future_seq)
+                                pred_student, pred_teacher, z_student, z_teacher = self.model(batch_x)
                                 outputs = pred_student[:, :, f_dim:]
                                 mse_loss = criterion(outputs, batch_y_pred)
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                z_enc_n = F.normalize(z_enc, dim=-1)
+                                z_stu_n = F.normalize(z_student, dim=-1)
                                 z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_cosine = -(z_enc_n * z_tea_n).sum(dim=-1).mean()
-                                loss_mse_align = F.mse_loss(z_enc, z_teacher.detach())
+                                loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
+                                loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
                                 loss_align = loss_cosine + loss_mse_align
                                 loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:

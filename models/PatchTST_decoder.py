@@ -9,50 +9,51 @@ try:
 except ImportError:
     HAS_CHRONOS = False
 
-from layers.PatchTST_Decoder_backbone import PatchTST_Decoder_backbone
+from layers.MiniChronos2_backbone import MiniChronos2_backbone
 
 
 class Model(nn.Module):
-    """PatchTST_decoder — FutureQueryDecoder with optional Chronos2 distillation.
+    """PatchTST_decoder — MiniChronos2 student with optional Chronos2 teacher distillation.
 
-    Controlled by --contrastive:
-    - Distillation mode (contrastive=1): loads Chronos2 teacher for alignment
-    - Standalone mode (contrastive=0): pure FutureQueryDecoder, no Chronos2 needed
+    Student: small Chronos2-style encoder (128-dim, channel-independent)
+        Input: [historical patches | masked future patches] with Chronos2-style time encoding
+        Architecture: InstanceNorm → Patch(16) → input_proj → TransformerEncoder
+        Output: last num_output_patches hidden states → PatchwiseHead → prediction
+
+    Teacher (alignment=1): frozen large Chronos2 encodes x_past → future tokens (768-dim)
+        → proj_down(768→d_model) → teacher_head → pred_teacher
+        Both student and teacher use ONLY x_past (no ground-truth future needed).
+        Time-encoding semantics match: both produce future-token representations from past.
+        Alignment signal is clean — no past/future distribution mismatch.
+
+    Training losses:
+        Loss①  = MSE(pred_student, y)
+        Loss②  = λ_t  * MSE(pred_teacher, y)           [warmup phase]
+               = λ_t2 * MSE(pred_teacher, y)           [align phase]
+        Loss③  = λ_a  * (cosine + MSE)(z_student, z_teacher)  [align phase]
+
+    Inference: only student path, Chronos2 not loaded / not called.
 
     Difference from PatchTST_future_align:
-        - A FutureQueryDecoder (cross-attention) sits between encoder and head.
-        - Alignment target z_future (decoder output) is future-oriented,
-          closing the gap with z_teacher (Chronos2 future embeddings).
-        - PatchwiseHead is the natural choice: decoder patch i semantically
-          maps to future segment i.
-
-    Training paths (distillation mode):
-        Student: x_past → Encoder → FutureQueryDecoder → Head → pred_s
-        Teacher: x_future → Chronos2 (frozen) → proj_down → teacher_head → pred_t
-
-        Loss = MSE(pred_s, y)                              # Loss①
-             + λ_t  * MSE(pred_t, y)                      # Loss② (warmup only / reduced in phase 2)
-             + λ_a  * (cosine + MSE)(z_future, z_teacher)  # Loss③
-
-    Inference: Chronos2 not needed.
+        - Student uses Chronos2-style architecture (time encoding + masked future tokens)
+          instead of TSTiEncoder + FutureQueryDecoder (cross-attention)
+        - Teacher uses encode(x_past) instead of embed(x_future): no GT future needed
+        - Both student/teacher future tokens have consistent positive time encoding
     """
 
     def __init__(self, configs):
         super().__init__()
 
         self.pred_len = configs.pred_len
-        self.seq_len = configs.seq_len
+        self.seq_len  = configs.seq_len
         self.device_str = getattr(configs, 'device', 'cuda:0')
-
-        # Number of future patches (pred_len // 16)
         self.num_output_patches = configs.pred_len // 16
 
-        # Check if we need teacher path (distillation mode)
-        # Use --alignment to control: 1=enable distillation (load Chronos2), 0=standalone mode
+        # alignment=0 → standalone mode (no Chronos2)
         user_alignment = getattr(configs, 'alignment', None)
-        self.use_teacher = False if user_alignment is not None and user_alignment == 0 else True
+        self.use_teacher = not (user_alignment is not None and user_alignment == 0)
 
-        # ---- Chronos2 (frozen) ---- only load when needed
+        # ---- Chronos2 (frozen) ---- only load when distillation is enabled
         if self.use_teacher:
             if not HAS_CHRONOS:
                 raise ImportError(
@@ -70,8 +71,8 @@ class Model(nn.Module):
         else:
             self.chronos = None
 
-        # ---- Backbone (encoder + FutureQueryDecoder + proj_down + heads) ----
-        self.backbone = PatchTST_Decoder_backbone(
+        # ---- MiniChronos2 backbone (student + teacher heads) ----
+        self.backbone = MiniChronos2_backbone(
             c_in=configs.enc_in,
             context_window=configs.seq_len,
             target_window=configs.pred_len,
@@ -81,55 +82,52 @@ class Model(nn.Module):
             d_ff=configs.d_ff,
             dropout=configs.dropout,
             head_dropout=getattr(configs, 'head_dropout', 0.0),
-            individual=getattr(configs, 'individual', 0),
-            revin=getattr(configs, 'revin', 1),
-            affine=getattr(configs, 'affine', 0),
-            subtract_last=getattr(configs, 'subtract_last', 0),
             head_type=getattr(configs, 'head_type', 'patch_wise'),
-            decoder_layers=configs.d_layers,
         )
 
-    def forward(self, x_past, x_future=None):
+    def forward(self, x_past: torch.Tensor):
         """
         Args:
-            x_past:   (bs, seq_len,  nvars)
-            x_future: (bs, pred_len, nvars)  — only needed during training
+            x_past: (bs, seq_len, nvars)
 
-        Returns (training):
+        Returns (training, use_teacher=True):
             pred_student: (bs, pred_len, nvars)
             pred_teacher: (bs, pred_len, nvars)
-            z_future:     (bs, nvars, output_patch_num, d_model)
+            z_student:    (bs, nvars, output_patch_num, d_model)
             z_teacher:    (bs, nvars, output_patch_num, d_model)
 
-        Returns (inference):
+        Returns (inference or use_teacher=False):
             pred_student: (bs, pred_len, nvars)
         """
-        # (bs, seq_len, nvars) → (bs, nvars, seq_len)
-        x_perm = x_past.permute(0, 2, 1)
+        x_perm = x_past.permute(0, 2, 1)  # (bs, nvars, seq_len)
 
-        # Student path
-        pred_s, z_future = self.backbone.forward_student(x_perm)
+        # Student path — only x_past needed
+        pred_s, z_student, loc_scale = self.backbone.forward_student(x_perm)
         pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
-        if x_future is not None and self.use_teacher:
-            # Teacher path: embed ground-truth future with frozen Chronos2
-            future_perm = x_future.permute(0, 2, 1)  # (bs, nvars, pred_len)
+        if self.use_teacher and self.training:
+            bs, nvars, seq_len = x_perm.shape
+            x_flat = x_perm.reshape(bs * nvars, seq_len).float()
 
-            embeddings_list, loc_scales = self.chronos.embed(future_perm.cpu())
-            # embeddings_list: list of length bs, each (nvars, num_tokens+2, 768)
-            z_chron = torch.stack(embeddings_list, dim=0).to(x_past.device)
-            # z_chron: (bs, nvars, num_tokens+2, 768)
-            z_chron = z_chron[:, :, :self.num_output_patches, :]
-            # z_chron: (bs, nvars, output_patch_num, 768)
+            # Teacher: frozen Chronos2 encodes x_past → future token representations
+            # encode() returns (encoder_outputs, loc_scale, mask, num_ctx_patches)
+            # last_hidden_state shape: (bs*nvars, num_ctx+1+num_out, 768)
+            chronos_device = next(self.chronos.model.parameters()).device
+            with torch.no_grad():
+                enc_out, _, _, _ = self.chronos.model.encode(
+                    context=x_flat.to(chronos_device),
+                    num_output_patches=self.num_output_patches,
+                )
 
-            # x_future loc/scale from Chronos2 (for teacher path denorm)
-            loc   = torch.stack([ls[0] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
-            scale = torch.stack([ls[1] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
+            # Take last num_output_patches tokens as future representations
+            z_chron_flat = enc_out.last_hidden_state[:, -self.num_output_patches:, :]
+            z_chron_flat = z_chron_flat.to(x_past.device)
+            z_chron = z_chron_flat.reshape(bs, nvars, self.num_output_patches, 768)
 
-            pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc=loc, scale=scale)
+            # Teacher head: use student's loc_scale (x_past stats) for consistent denorm
+            pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc_scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
-            return pred_student, pred_teacher, z_future, z_teacher
+            return pred_student, pred_teacher, z_student, z_teacher
 
-        # Student only (no teacher / no distillation)
         return pred_student
