@@ -92,6 +92,9 @@ class Model(nn.Module):
                 print(f"Using {feature_extractor} feature extractor, d_extractor={d_extractor}")
 
         self.feature_extractor = feature_extractor
+        # Use Chronos2's InstanceNorm (arcsinh) when aligning with Chronos2 past tokens
+        # so student and teacher see the same normalized input space
+        self.use_chronos_norm = (self.model_name == 'PatchTST_REPA' and feature_extractor == 'chronos')
         self.device = getattr(configs, 'device', 'cuda:0')
 
         # TiViT parameters
@@ -170,7 +173,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  subtract_last=subtract_last, use_chronos_norm=self.use_chronos_norm, encoder_depth=encoder_depth,
                                   alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
                                   verbose=verbose, **kwargs)
             self.model_res = PatchTST_backbone(c_in=c_in, context_window=context_window, target_window=target_window, patch_len=patch_len, stride=stride,
@@ -180,7 +183,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  subtract_last=subtract_last, use_chronos_norm=self.use_chronos_norm, encoder_depth=encoder_depth,
                                   alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
                                   verbose=verbose, **kwargs)
         else:
@@ -191,7 +194,7 @@ class Model(nn.Module):
                                   attn_mask=attn_mask, res_attention=res_attention, pre_norm=pre_norm, store_attn=store_attn,
                                   pe=pe, learn_pe=learn_pe, fc_dropout=fc_dropout, head_dropout=head_dropout, padding_patch=padding_patch,
                                   pretrain_head=pretrain_head, head_type=head_type, individual=individual, revin=revin, affine=affine,
-                                  subtract_last=subtract_last, encoder_depth=encoder_depth,
+                                  subtract_last=subtract_last, use_chronos_norm=self.use_chronos_norm, encoder_depth=encoder_depth,
                                   alignment=self.alignment, num_quantiles=num_quantiles, d_extractor=d_extractor,
                                   verbose=verbose, **kwargs)
     

@@ -232,12 +232,35 @@ batch_x: (bs, seq_len, nvars)
 - `num_past = seq_len // 16`（seq_len=336 时为 21）
 - 与 `PatchTST_REPA`（stride=16，patch_num=21）完全匹配，可用 `patch_wise_cos` 对齐
 
+### Normalization in PatchTST_REPA with Chronos2
+
+当 `feature_extractor=chronos` 时，`PatchTST_REPA` 自动启用 **`use_chronos_norm=True`**，用 Chronos2 的 `InstanceNorm(use_arcsinh=True)` 替换 RevIN：
+
+- Chronos2 内部对输入做 `(x - mean) / std` 后再 `arcsinh`（`use_arcsinh=True`）
+- 若 student 用线性 RevIN 而 teacher 用 arcsinh，两者编码的是不同变换后的信号，alignment loss 的梯度是噪声
+- 启用 `use_chronos_norm` 后 student 和 teacher 看到相同的归一化输入，表示空间更对齐
+
+```
+PatchTST_backbone.forward (use_chronos_norm=True):
+  z (bs, nvars, seq_len)
+  → reshape (bs*nvars, seq_len)
+  → ChronosInstanceNorm(arcsinh=True): normalized + 存储 loc_scale
+  → reshape (bs, nvars, seq_len)
+  → patching → encoder → head
+  → reshape (bs*nvars, pred_len)
+  → ChronosInstanceNorm.inverse(loc_scale)  ← sinh + rescale
+  → reshape (bs, nvars, pred_len)
+```
+
+`use_chronos_norm` 由 `models/PatchTST.py` 自动设置，无需手动指定。
+
 ### Key Components
 
 **`layers/PatchTST_backbone.py`**：
 - **`build_linear(hidden_size, z_dim)`**: 单层 Linear，用于 `alignment_mlp`
 - **`build_mlp(hidden_size, z_dim, projected_dim=256)`**: 2 层 MLP（Linear→SiLU→Linear），保留备用
-- **`alignment_mlp`**: `build_linear(d_model, d_extractor)`，将 encoder 输出投影到特征提取器空间用于对比损失
+- **`alignment_mlp`**: `build_linear(d_model, d_extractor)`，将 encoder 输出投影到特征提取器空间用于对比损失（student 投影到 teacher 维度，per REPA 设计）
+- **`use_chronos_norm`**: `feature_extractor=chronos` 时自动启用，用 `ChronosInstanceNorm(arcsinh=True)` 替换 RevIN
 - **`PatchwiseHead`**: Lightweight head，每个 patch 独立经过共享 ResidualBlock（d_model→d_ff→output_patch_size）
 - **`Flatten_Head`**: 标准全局预测头，Linear(d_model×patch_num → pred_len)
 - **`Quantile_Head`**: 分位数预测头

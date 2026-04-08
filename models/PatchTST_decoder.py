@@ -86,33 +86,25 @@ class Model(nn.Module):
             head_type=getattr(configs, 'head_type', 'patch_wise'),
         )
 
-    def forward(self, x_past: torch.Tensor, teacher_only: bool = False):
+    def forward(self, x_past: torch.Tensor):
         """
         Args:
             x_past: (bs, seq_len, nvars)
-            teacher_only: if True, skip student forward (Phase 1 warmup)
 
-        Returns (training, use_teacher=True, teacher_only=False):
+        Returns (training, use_teacher=True):
             pred_student: (bs, pred_len, nvars)
             pred_teacher: (bs, pred_len, nvars)
             z_student:    (bs, nvars, output_patch_num, d_model)
             z_teacher:    (bs, nvars, output_patch_num, d_model)
-
-        Returns (training, use_teacher=True, teacher_only=True):
-            pred_teacher only (for Phase 1 warmup)
 
         Returns (inference or use_teacher=False):
             pred_student: (bs, pred_len, nvars)
         """
         x_perm = x_past.permute(0, 2, 1)  # (bs, nvars, seq_len)
 
-        # Student path — only x_past needed (skip in Phase 1 warmup)
-        if not teacher_only:
-            pred_s, z_student, loc_scale = self.backbone.forward_student(x_perm)
-            pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
-        else:
-            pred_student = None
-            z_student = None
+        # Student path — only x_past needed
+        pred_s, z_student, loc_scale = self.backbone.forward_student(x_perm)
+        pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
         if self.use_teacher and self.training:
             bs, nvars, seq_len = x_perm.shape

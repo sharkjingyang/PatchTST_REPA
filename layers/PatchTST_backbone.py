@@ -12,6 +12,12 @@ import numpy as np
 from layers.PatchTST_layers import *
 from layers.RevIN import RevIN
 
+try:
+    from chronos.chronos_bolt import InstanceNorm as ChronosInstanceNorm
+    HAS_CHRONOS_NORM = True
+except ImportError:
+    HAS_CHRONOS_NORM = False
+
 
 def build_mlp(hidden_size, z_dim, projected_dim=256):
     return nn.Sequential(
@@ -33,6 +39,7 @@ class PatchTST_backbone(nn.Module):
                  padding_var:Optional[int]=None, attn_mask:Optional[Tensor]=None, res_attention:bool=True, pre_norm:bool=False, store_attn:bool=False,
                  pe:str='zeros', learn_pe:bool=True, fc_dropout:float=0., head_dropout = 0, padding_patch = None,
                  pretrain_head:bool=False, head_type = 'flatten', individual = False, revin = True, affine = True, subtract_last = False,
+                 use_chronos_norm: bool = False,
                  encoder_depth: int = 2, alignment: int = 0,
                  num_quantiles: int = 20,
                  d_extractor: int = 768,
@@ -40,9 +47,15 @@ class PatchTST_backbone(nn.Module):
 
         super().__init__()
 
-        # RevIn
-        self.revin = revin
-        if self.revin: self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
+        # Normalization: Chronos2 InstanceNorm (arcsinh) or RevIN
+        self.use_chronos_norm = use_chronos_norm and HAS_CHRONOS_NORM
+        if self.use_chronos_norm:
+            self.chronos_norm = ChronosInstanceNorm(use_arcsinh=True)
+            self._loc_scale = None  # stored during norm, reused in denorm
+            self.revin = False
+        else:
+            self.revin = revin
+            if self.revin: self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
 
         self.d_extractor = d_extractor
 
@@ -91,7 +104,12 @@ class PatchTST_backbone(nn.Module):
     
     def forward(self, z):                                       # z: [bs x nvars x seq_len]
         # norm
-        if self.revin:
+        if self.use_chronos_norm:
+            bs, nvars, seq_len = z.shape
+            z_flat = z.reshape(bs * nvars, seq_len)
+            z_flat, self._loc_scale = self.chronos_norm(z_flat)
+            z = z_flat.reshape(bs, nvars, seq_len)
+        elif self.revin:
             z = z.permute(0,2,1)
             z = self.revin_layer(z, 'norm')
             z = z.permute(0,2,1)
@@ -110,7 +128,7 @@ class PatchTST_backbone(nn.Module):
             zs = None
 
         zs_projected = None
-        if self.contrastive and zs is not None:
+        if self.alignment and zs is not None:
             bs, nvars, d_model, patch_num = zs.shape
             zs_flat = zs.permute(0, 1, 3, 2).reshape(-1, d_model)          # [bs*nvars*patch_num x d_model]
             zs_projected = self.alignment_mlp(zs_flat)                     # [bs*nvars*patch_num x d_extractor]
@@ -119,7 +137,12 @@ class PatchTST_backbone(nn.Module):
         output = self.head(z)
 
         # Apply denorm
-        if self.revin and output is not None:
+        if self.use_chronos_norm and output is not None:
+            bs, nvars, pred_len = output.shape
+            out_flat = output.reshape(bs * nvars, pred_len)
+            out_flat = self.chronos_norm.inverse(out_flat, self._loc_scale)
+            output = out_flat.reshape(bs, nvars, pred_len)
+        elif self.revin and output is not None:
             if self.head_type == 'quantile':
                 # output: (bs, nvars, num_quantiles, pred_len)
                 bs, nvars, num_quantiles, pred_len = output.shape
