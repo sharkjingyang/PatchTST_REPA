@@ -71,9 +71,9 @@ class Model(nn.Module):
         # RevIN for future mode: normalize with x_past stats (consistent with FutureAlign)
         self.revin_layer = RevIN(self.n_vars, affine=False) if self.embed_type == 'future' else None
 
-        # proj_down: Linear(768 → d_model) bottleneck before head (only for embed_type='future')
+        # proj_down: Linear(768 → d_model) bottleneck before head (for embed_type='future' or 'predict')
         self.proj_down = None
-        if getattr(configs, 'proj_down', 0) and self.embed_type == 'future':
+        if getattr(configs, 'proj_down', 0) and self.embed_type in ('future', 'predict'):
             d_model = configs.d_model
             self.proj_down = nn.Linear(self.chronos_output_dim, d_model)
             head_input_dim = d_model
@@ -84,7 +84,7 @@ class Model(nn.Module):
             # PatchwiseHead: per-patch prediction (like Chronos2 native)
             self.patchwise_head = PatchwiseHead(
                 n_vars=self.n_vars,
-                d_model=self.chronos_output_dim,
+                d_model=head_input_dim,
                 output_patch_num=self.num_output_patches,
                 output_patch_size=self.patch_len,
                 dropout=head_dropout
@@ -146,7 +146,11 @@ class Model(nn.Module):
             # last num_output_patches tokens
             future_embeds = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
             embeddings = future_embeds.reshape(bs, nvars, self.num_output_patches, self.chronos_output_dim)
-            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_output_patches)
+
+            if self.proj_down is not None:
+                embeddings = self.proj_down(embeddings)  # (bs, nvars, num_output_patches, d_model)
+
+            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, d_model/768, num_output_patches)
 
             output = self.patchwise_head(embeddings_perm)  # (bs, nvars, pred_len)
 

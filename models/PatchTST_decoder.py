@@ -25,6 +25,7 @@ class Model(nn.Module):
         Both student and teacher use ONLY x_past (no ground-truth future needed).
         Time-encoding semantics match: both produce future-token representations from past.
         Alignment signal is clean — no past/future distribution mismatch.
+        Teacher denorm uses Chronos2's own loc_scale from encode() (consistent with Chronos2_head predict mode).
 
     Training losses:
         Loss①  = MSE(pred_student, y)
@@ -114,7 +115,7 @@ class Model(nn.Module):
             # last_hidden_state shape: (bs*nvars, num_ctx+1+num_out, 768)
             chronos_device = next(self.chronos.model.parameters()).device
             with torch.no_grad():
-                enc_out, _, _, _ = self.chronos.model.encode(
+                enc_out, t_loc_scale, _, _ = self.chronos.model.encode(
                     context=x_flat.to(chronos_device),
                     num_output_patches=self.num_output_patches,
                 )
@@ -124,8 +125,9 @@ class Model(nn.Module):
             z_chron_flat = z_chron_flat.to(x_past.device)
             z_chron = z_chron_flat.reshape(bs, nvars, self.num_output_patches, 768)
 
-            # Teacher head: use student's loc_scale (x_past stats) for consistent denorm
-            pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc_scale)
+            # Teacher head: use Chronos2's own loc_scale (consistent with encode path)
+            t_loc_scale = (t_loc_scale[0].to(x_past.device), t_loc_scale[1].to(x_past.device))
+            pred_t, z_teacher = self.backbone.forward_teacher(z_chron, t_loc_scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
             return pred_student, pred_teacher, z_student, z_teacher

@@ -13,7 +13,7 @@ data_name=ETTh1
 random_seed=2021
 pred_len=336
 d_model=128
-chronos_embed_type=future
+chronos_embed_type=predict
 proj_down=1
 head_type=patch_wise
 

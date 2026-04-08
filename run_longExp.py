@@ -132,21 +132,7 @@ if __name__ == '__main__':
         args.device = 'cpu'
 
     print('Args in experiment:')
-    # Chronos-related params only printed when Chronos is actually used
-    chronos_models = {'PatchTST_REPA', 'PatchTST_REPA_Fusion', 'PatchTST_future_align', 'PatchTST_decoder', 'Chronos2_head', 'Chronos2_zeroshot'}
-    use_chronos = args.model in chronos_models
-    chronos_only_keys = {
-        'feature_extractor', 'chronos_pretrained', 'mantis_pretrained', 'tivit_pretrained',
-        'projector_dim', 'lambda_alignment', 'alignment_type', 'alignment',
-        'lambda_t', 'lambda_t2', 'lambda_a', 'align_warmup_epochs',
-        'chronos_embed_type', 'proj_down', 'd_layers',
-        'head_type', 'num_quantiles',
-    }
-    arg_dict = vars(args)
-    for k, v in arg_dict.items():
-        if k in chronos_only_keys and not use_chronos:
-            continue
-        print(f'  {k}: {v}')
+    print(args)
 
     Exp = Exp_Main
 
