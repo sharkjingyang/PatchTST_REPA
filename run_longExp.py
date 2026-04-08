@@ -58,6 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('--d_model', type=int, default=512, help='dimension of model')
     parser.add_argument('--n_heads', type=int, default=8, help='num of heads')
     parser.add_argument('--e_layers', type=int, default=4, help='num of encoder layers')
+    parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers (FutureQueryDecoder cross-attention layers)')
     parser.add_argument('--encoder_depth', type=int, default=2, help='which layer to extract intermediate output')
     parser.add_argument('--projector_dim', type=int, default=768, help='MLP projector output dimension for TiViT alignment')
     parser.add_argument('--lambda_alignment', type=float, default=0.5, help='weight for alignment loss (REPA models)')
