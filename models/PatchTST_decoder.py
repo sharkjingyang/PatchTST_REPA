@@ -86,7 +86,7 @@ class Model(nn.Module):
             affine=getattr(configs, 'affine', 0),
             subtract_last=getattr(configs, 'subtract_last', 0),
             head_type=getattr(configs, 'head_type', 'patch_wise'),
-            decoder_layers=getattr(configs, 'decoder_layers', 1),
+            decoder_layers=configs.d_layers,
         )
 
     def forward(self, x_past, x_future=None):

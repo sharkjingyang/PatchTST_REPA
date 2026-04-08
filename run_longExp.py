@@ -69,8 +69,6 @@ if __name__ == '__main__':
                         help='PatchTST_future_align: alignment loss weight after warmup (Loss③)')
     parser.add_argument('--align_warmup_epochs', type=int, default=5,
                         help='PatchTST_future_align/PatchTST_decoder: epochs to train teacher only before enabling alignment')
-    parser.add_argument('--decoder_layers', type=int, default=1,
-                        help='PatchTST_decoder: number of FutureQueryDecoder cross-attention layers')
     parser.add_argument('--alignment_type', type=str, default='mean_pool', choices=['mean_pool', 'patch_wise_cos', 'patch_wise_mse'],
                         help='alignment loss type: mean_pool (cosine after pooling), patch_wise_cos (per-patch cosine), patch_wise_mse (per-patch MSE)')
     parser.add_argument('--tivit_pretrained', type=str, default='./open_clip/open_clip_model.safetensors', help='TiViT pretrained model path')
