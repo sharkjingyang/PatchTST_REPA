@@ -461,7 +461,8 @@ class Exp_Main(Exp_Basic):
                         lambda_t2 = getattr(self.args, 'lambda_t2', 0.1)
                         lambda_a = getattr(self.args, 'lambda_a', 0.5)
                         align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
-                        use_teacher = (lambda_t > 0 or lambda_a > 0)
+                        alignment_flag = getattr(self.args, 'alignment', None)
+                        use_teacher = (lambda_t > 0 or lambda_a > 0) and (alignment_flag != 0)
 
                         if use_teacher:
                             future_seq = batch_y[:, -self.args.pred_len:, :]
