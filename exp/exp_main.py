@@ -70,12 +70,13 @@ class Exp_Main(Exp_Basic):
 
         # PatchTST_future_align / PatchTST_decoder: backbone + Chronos2
         if model_name in ['PatchTST_future_align', 'PatchTST_decoder']:
-            chronos_total = sum(p.numel() for p in model.chronos_model.parameters())
+            has_chronos = model.chronos_model is not None
+            chronos_total = sum(p.numel() for p in model.chronos_model.parameters()) if has_chronos else 0
             bb = model.backbone
             encoder_total      = sum(p.numel() for p in bb.backbone.parameters())
-            proj_down_total    = sum(p.numel() for p in bb.proj_down.parameters())
+            proj_down_total    = sum(p.numel() for p in bb.proj_down.parameters()) if hasattr(bb, 'proj_down') and bb.proj_down is not None else 0
             head_total         = sum(p.numel() for p in bb.head.parameters())
-            teacher_head_total = sum(p.numel() for p in bb.teacher_head.parameters())
+            teacher_head_total = sum(p.numel() for p in bb.teacher_head.parameters()) if hasattr(bb, 'teacher_head') and bb.teacher_head is not None else 0
             revin_total        = sum(p.numel() for p in bb.revin_layer.parameters()) if bb.revin else 0
             all_total          = sum(p.numel() for p in model.parameters())
             all_trainable      = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -87,7 +88,8 @@ class Exp_Main(Exp_Basic):
             print(f"  output_patch_num: {bb.output_patch_num}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
-            print(f"Total parameters (excl. Chronos2):   {all_total - chronos_total:,}")
+            if has_chronos:
+                print(f"Total parameters (excl. Chronos2):   {all_total - chronos_total:,}")
             print(f"Trainable parameters:                {all_trainable:,}")
 
             print(f"\nModule Parameters:")
@@ -95,11 +97,14 @@ class Exp_Main(Exp_Basic):
             if model_name == 'PatchTST_decoder':
                 fqd_total = sum(p.numel() for p in bb.future_query_decoder.parameters())
                 print(f"  FutureQueryDecoder:                {fqd_total:,}")
-            print(f"  proj_down (768→d_model):           {proj_down_total:,}")
+            if proj_down_total:
+                print(f"  proj_down (768→d_model):           {proj_down_total:,}")
             print(f"  Student Head:                      {head_total:,}")
-            print(f"  Teacher Head:                      {teacher_head_total:,}")
+            if teacher_head_total:
+                print(f"  Teacher Head:                      {teacher_head_total:,}")
             print(f"  RevIN:                             {revin_total:,}")
-            print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
+            if has_chronos:
+                print(f"\n  Chronos2 (frozen):                 {chronos_total:,}")
             print("=" * 60)
             return
 
