@@ -90,17 +90,21 @@ class Model(nn.Module):
         """
         Args:
             x_past:   (bs, seq_len,  nvars)
-            x_future: (bs, pred_len, nvars)  — only needed during training
+            x_future: unused, kept for API compatibility
 
-        Returns (training):
+        Returns (training, use_teacher=True):
             pred_student: (bs, pred_len, nvars)
             pred_teacher: (bs, pred_len, nvars)
             z_enc:        (bs, nvars, output_patch_num, d_model)
             z_teacher:    (bs, nvars, output_patch_num, d_model)
 
-        Returns (inference):
+        Returns (inference / use_teacher=False):
             pred_student: (bs, pred_len, nvars)
+
+        Teacher signal: Chronos2.model.encode(x_past, num_output_patches) future tokens.
+        No x_future needed — train/inference consistent, both only see x_past.
         """
+        bs, seq_len, nvars = x_past.shape
         # (bs, seq_len, nvars) → (bs, nvars, seq_len)
         x_perm = x_past.permute(0, 2, 1)
 
@@ -108,20 +112,22 @@ class Model(nn.Module):
         pred_s, z_enc = self.backbone.forward_student(x_perm)
         pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
-        if x_future is not None and self.use_teacher:
-            # Teacher path: embed ground-truth future with frozen Chronos2
-            future_perm = x_future.permute(0, 2, 1)  # (bs, nvars, pred_len)
+        if self.use_teacher and self.training:
+            # Teacher path: Chronos2.model.encode(x_past) → future tokens
+            # x_past only — no ground-truth future needed, consistent with inference
+            x_flat = x_perm.reshape(bs * nvars, seq_len).float()
 
-            embeddings_list, loc_scales = self.chronos.embed(future_perm.cpu())
-            # embeddings_list: list of length bs, each (nvars, num_tokens+2, 768)
-            z_chron = torch.stack(embeddings_list, dim=0).to(x_past.device)
-            # z_chron: (bs, nvars, num_tokens+2, 768)
-            z_chron = z_chron[:, :, :self.num_output_patches, :]
-            # z_chron: (bs, nvars, output_patch_num, 768)
+            encoder_out, loc_scale, _, _ = self.chronos.model.encode(
+                context=x_flat.to(self.chronos.model.device),
+                num_output_patches=self.num_output_patches,
+            )
+            # last num_output_patches tokens: (bs*nvars, num_output_patches, 768)
+            future_hidden = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
+            z_chron = future_hidden.reshape(bs, nvars, self.num_output_patches, 768).to(x_past.device)
 
-            # x_future loc/scale from Chronos2 (teacher denorm only — training only path)
-            loc   = torch.stack([ls[0] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
-            scale = torch.stack([ls[1] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)  # (bs, nvars)
+            # loc/scale from Chronos2 encode (x_past stats, consistent with student RevIN)
+            loc   = loc_scale[0].reshape(bs, nvars).to(x_past.device)
+            scale = loc_scale[1].reshape(bs, nvars).to(x_past.device)
 
             pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc=loc, scale=scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)

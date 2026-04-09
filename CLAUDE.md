@@ -217,15 +217,44 @@ Output: (bs, pred_len, nvars) - denormalized
 
 **Note**: `future` 模式推理时也需要传入真实未来序列（无 fallback），适用于 teacher path 验证实验，不用于真实预测。
 
+### Chronos2 Architecture
+
+Chronos2（`chronos.chronos2`）是 Amazon 的时序基础模型，**不是 T5**，不要与 Chronos-Bolt（`chronos.chronos_bolt`，基于 T5）混淆。
+
+**完整 forward 流程**：
+```
+x: (B*C, T)
+  → InstanceNorm(use_arcsinh=True): (x - mean) / std → arcsinh
+  → Patching(patch_size=16): (B*C, num_past, 16)
+  → input_patch_embedding (ResidualBlock: patch_size*3 → d_ff → d_model)
+    # x3 因为 concat [time_enc | patch | patch_mask]，time_enc 区分过去/未来位置
+  → [past_embeds | REG | future_embeds]  ← future_embeds 是可学习的 query token（零初始化 + time_enc）
+  → Chronos2Encoder（N 层，每层）：
+      1. TimeSelfAttention (RoPE，时间维度 self-attn)
+      2. GroupSelfAttention (batch 维度 self-attn，同 group_id 的多变量互相 attend，无 RoPE)
+      3. FeedForward (MLP)
+  → encoder hidden_states: (B*C, num_past + 1 + num_output, d_model)
+  → 取最后 num_output 个 token: (B*C, num_output, d_model)
+  → output_patch_embedding (ResidualBlock: d_model → d_ff → num_quantiles * output_patch_size)
+  → reshape: (B*C, num_quantiles, pred_len)
+  → instance_norm.inverse (sinh + rescale)
+```
+
+**无 cross-attention，无 decoder**。future token 直接拼入 encoder 输入序列，通过 self-attention 从 past token 获取信息。
+
+**两个关键接口**：
+- `model.encode(context, num_output_patches)`: 返回 encoder 全部 hidden states `[past | REG | future]`，shape `(B*C, num_past+1+num_output, d_model)`
+- `pipeline.embed(inputs)`: 内部调用 `model.encode`（num_output_patches=0），每个时序返回 shape `(n_variates, num_patches+2, d_model)`，+2 为 REG token + 1 masked output patch token（**非 CLS/SEP**）
+
 ### Chronos2 Feature Extraction in REPA Models
 
-`PatchTST_REPA` uses `Chronos2Pipeline.embed(batch_x)` to extract **past encoder tokens** as `zs_tilde`. Past tokens are bidirectionally contextualized (T5 encoder)，与 PatchTST 双向 attention 的表示空间更匹配。
+`PatchTST_REPA` uses `Chronos2Pipeline.embed(batch_x)` to extract **past encoder tokens** as `zs_tilde`. Past tokens 经 Chronos2Encoder（TimeSelfAttention + GroupSelfAttention）双向上下文化，与 PatchTST 双向 attention 的表示空间更匹配。
 
 ```
 batch_x: (bs, seq_len, nvars)
   → permute: (bs, nvars, seq_len)
   → chronos.embed(input_perm.cpu())        # pin_memory 需要 CPU tensor
-  → embeddings: (bs, nvars, num_past+2, 768)  # +2 为 CLS/SEP special tokens
+  → embeddings: (bs, nvars, num_past+2, 768)  # +2 为 REG token + 1 masked output patch token
   → past tokens [:num_past]: (bs, nvars, 21, 768)  ← zs_tilde
 ```
 

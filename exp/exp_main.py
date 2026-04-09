@@ -480,18 +480,16 @@ class Exp_Main(Exp_Basic):
 
                         if use_teacher:
                             if epoch < align_warmup:
-                                # Phase 1: warmup — train student encoder with alignment + teacher supervision
-                                # Both encoder and teacher_head train, but student_head is not used yet
+                                # Phase 1: warmup — teacher only, train proj_down + teacher_head
+                                # Student encoder receives no gradient; alignment not yet computed
                                 pred_student, pred_teacher, z_student, z_teacher = self.model(batch_x)
                                 outputs = pred_student[:, :, f_dim:]
-                                mse_loss = criterion(outputs, batch_y_pred)  # student also tries to predict
+                                mse_loss = criterion(outputs, batch_y_pred)  # logged only, not in loss
                                 loss_teacher = criterion(pred_teacher[:, :, f_dim:], batch_y_pred)
-                                z_stu_n = F.normalize(z_student, dim=-1)
-                                z_tea_n = F.normalize(z_teacher.detach(), dim=-1)
-                                loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
-                                loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
-                                loss_align = loss_cosine + loss_mse_align
-                                loss = mse_loss + lambda_t * loss_teacher + lambda_a * loss_align
+                                loss_cosine = torch.tensor(0.0)
+                                loss_mse_align = torch.tensor(0.0)
+                                loss_align = torch.tensor(0.0)
+                                loss = lambda_t * loss_teacher
                             else:
                                 # Phase 2: student MSE + slow teacher + alignment (alignment acts as regularizer)
                                 pred_student, pred_teacher, z_student, z_teacher = self.model(batch_x)

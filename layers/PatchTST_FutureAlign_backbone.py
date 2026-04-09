@@ -157,8 +157,8 @@ class PatchTST_FutureAlign_backbone(nn.Module):
         """
         Args:
             z_chron: (bs, nvars, output_patch_num, 768)  — Chronos2 future embeddings
-            loc:     (bs, nvars)  — x_future mean from Chronos2.embed (preferred)
-            scale:   (bs, nvars)  — x_future std  from Chronos2.embed (preferred)
+            loc:     (bs, nvars)  — x_past mean from Chronos2.model.encode
+            scale:   (bs, nvars)  — x_past std  from Chronos2.model.encode
                      If None, falls back to RevIN stats from forward_student (x_past stats).
         Returns:
             pred:      (bs, nvars, pred_len)
