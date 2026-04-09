@@ -98,7 +98,7 @@ Or use shell scripts:
 ```bash
 sh ./scripts/PatchTST.sh              # Baseline
 sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
-sh ./scripts/Chronos2.sh             # PatchTST_REPA + Chronos (patch_wise_cos)
+sh ./scripts/Chronos2_REPA.sh        # PatchTST_REPA + Chronos (patch_wise_cos)
 sh ./scripts/Chronos2_FutureAlign.sh  # PatchTST_future_align (joint distillation)
 sh ./scripts/Chronos2_Decoder.sh      # PatchTST_decoder (FutureQueryDecoder)
 sh ./scripts/Chronos2_featureHead.sh  # Chronos2_head (future + proj_down)
@@ -234,7 +234,7 @@ batch_x: (bs, seq_len, nvars)
 
 ### Normalization in PatchTST_REPA with Chronos2
 
-当 `feature_extractor=chronos` 时，`PatchTST_REPA` 自动启用 **`use_chronos_norm=True`**，用 Chronos2 的 `InstanceNorm(use_arcsinh=True)` 替换 RevIN：
+通过 `--use_chronos_norm 1` 手动启用，用 Chronos2 的 `InstanceNorm(use_arcsinh=True)` 替换 RevIN，适用于任意模型（PatchTST / PatchTST_REPA 均可）：
 
 - Chronos2 内部对输入做 `(x - mean) / std` 后再 `arcsinh`（`use_arcsinh=True`）
 - 若 student 用线性 RevIN 而 teacher 用 arcsinh，两者编码的是不同变换后的信号，alignment loss 的梯度是噪声
@@ -260,7 +260,7 @@ PatchTST_backbone.forward (use_chronos_norm=True):
 - **`build_linear(hidden_size, z_dim)`**: 单层 Linear，用于 `alignment_mlp`
 - **`build_mlp(hidden_size, z_dim, projected_dim=256)`**: 2 层 MLP（Linear→SiLU→Linear），保留备用
 - **`alignment_mlp`**: `build_linear(d_model, d_extractor)`，将 encoder 输出投影到特征提取器空间用于对比损失（student 投影到 teacher 维度，per REPA 设计）
-- **`use_chronos_norm`**: `feature_extractor=chronos` 时自动启用，用 `ChronosInstanceNorm(arcsinh=True)` 替换 RevIN
+- **`use_chronos_norm`**: `--use_chronos_norm 1` 手动启用，用 `ChronosInstanceNorm(arcsinh=True)` 替换 RevIN，任意模型均可使用
 - **`PatchwiseHead`**: Lightweight head，每个 patch 独立经过共享 ResidualBlock（d_model→d_ff→output_patch_size）
 - **`Flatten_Head`**: 标准全局预测头，Linear(d_model×patch_num → pred_len)
 - **`Quantile_Head`**: 分位数预测头
@@ -340,6 +340,7 @@ handle.remove()
 | `head_type` | flatten / patch_wise / quantile | flatten |
 | `chronos_embed_type` | Chronos2_head: past / predict / future | past |
 | `proj_down` | Chronos2_head (future mode): 1=add Linear(768→d_model) before head | 0 |
+| `use_chronos_norm` | 用 ChronosInstanceNorm(arcsinh=True) 替换 RevIN，任意模型可用；PatchTST_REPA+chronos 做对比实验时推荐开启 | 0 |
 | `lambda_t` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 1 warmup) | 0.5 |
 | `lambda_t2` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 2) | 0.1 |
 | `lambda_a` | future_align/decoder: 对齐损失权重 (Loss③) | 0.5 |
