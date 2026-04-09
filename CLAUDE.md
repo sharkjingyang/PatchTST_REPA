@@ -252,7 +252,7 @@ PatchTST_backbone.forward (use_chronos_norm=True):
   → reshape (bs, nvars, pred_len)
 ```
 
-`use_chronos_norm` 由 `models/PatchTST.py` 自动设置，无需手动指定。
+`use_chronos_norm` 需通过 `--use_chronos_norm 1` 手动指定，适用于任意模型（PatchTST / PatchTST_REPA 均可）。
 
 ### Key Components
 

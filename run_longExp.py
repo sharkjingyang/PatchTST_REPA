@@ -46,6 +46,9 @@ if __name__ == '__main__':
     parser.add_argument('--revin', type=int, default=1, help='RevIN; True 1 False 0')
     parser.add_argument('--affine', type=int, default=0, help='RevIN-affine; True 1 False 0')
     parser.add_argument('--subtract_last', type=int, default=0, help='0: subtract mean; 1: subtract last')
+    parser.add_argument('--use_chronos_norm', type=int, default=0,
+                        help='Replace RevIN with Chronos2 InstanceNorm(arcsinh=True); True 1 False 0. '
+                             'Auto-enabled for PatchTST_REPA+chronos. Use 1 to enable for any model.')
     parser.add_argument('--decomposition', type=int, default=0, help='decomposition; True 1 False 0')
     parser.add_argument('--kernel_size', type=int, default=25, help='decomposition-kernel')
     parser.add_argument('--individual', type=int, default=0, help='individual head; True 1 False 0')

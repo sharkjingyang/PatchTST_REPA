@@ -92,9 +92,9 @@ class Model(nn.Module):
                 print(f"Using {feature_extractor} feature extractor, d_extractor={d_extractor}")
 
         self.feature_extractor = feature_extractor
-        # Use Chronos2's InstanceNorm (arcsinh) when aligning with Chronos2 past tokens
-        # so student and teacher see the same normalized input space
-        self.use_chronos_norm = (self.model_name == 'PatchTST_REPA' and feature_extractor == 'chronos')
+        # Use Chronos2's InstanceNorm (arcsinh) instead of RevIN.
+        # Must be explicitly enabled via --use_chronos_norm 1.
+        self.use_chronos_norm = bool(getattr(configs, 'use_chronos_norm', 0))
         self.device = getattr(configs, 'device', 'cuda:0')
 
         # TiViT parameters
