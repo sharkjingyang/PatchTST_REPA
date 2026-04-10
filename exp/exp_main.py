@@ -123,11 +123,10 @@ class Exp_Main(Exp_Basic):
 
             embed_type = getattr(model, 'embed_type', 'past')
             head_type = getattr(model, 'head_type', 'flatten')
+            head_total = sum(p.numel() for p in model.head.parameters())
             if embed_type == 'predict' or (embed_type == 'future' and head_type == 'patch_wise'):
-                head_total = sum(p.numel() for p in model.patchwise_head.parameters())
                 head_name = 'PatchwiseHead'
             else:
-                head_total = sum(p.numel() for p in model.flatten_head.parameters())
                 head_name = f'Flatten_Head ({"future tokens" if embed_type == "future" else "past tokens"})'
 
             all_total = sum(p.numel() for p in model.parameters())
@@ -142,7 +141,11 @@ class Exp_Main(Exp_Basic):
             print(f"Total parameters (excl. Chronos):    {all_total - chronos_total:,}")
             print(f"Trainable parameters:                {all_trainable:,}")
 
+            proj_down_total = sum(p.numel() for p in model.proj_down.parameters()) if model.proj_down is not None else 0
+
             print(f"\nModule Parameters:")
+            if proj_down_total:
+                print(f"  proj_down (768→d_model):          {proj_down_total:,}")
             print(f"  {head_name}:                      {head_total:,}")
             print(f"\n  Chronos2 (frozen):                {chronos_total:,}")
 
