@@ -11,7 +11,7 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=720
+pred_len=336
 d_model=16
 d_ff=128
 e_layers=3
