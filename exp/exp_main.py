@@ -88,11 +88,8 @@ class Exp_Main(Exp_Basic):
             print(f"\nModel Configuration:")
             print(f"  Model:           {model_name}")
             print(f"  head_type:        {bb.head_type}")
-            if model_name == 'PatchTST_decoder':
-                print(f"  patch_len:        {bb.patch_len}  (fixed = Chronos2 native patch size)")
-            else:
-                print(f"  patch_len (auto): {bb.patch_len}  (seq_len // output_patch_num)")
-            print(f"  output_patch_num: {bb.output_patch_num}")
+            print(f"  patch_len:        {bb.patch_len}  (Chronos2 native patch size)")
+            print(f"  patch_num:        {bb.patch_num}")
 
             print(f"\nTotal parameters (all):              {all_total:,}")
             if has_chronos:
