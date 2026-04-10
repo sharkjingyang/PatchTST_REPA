@@ -11,11 +11,19 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=336
+pred_len=96
 d_model=128
-chronos_embed_type=predict
-proj_down=1
-head_type=patch_wise
+
+chronos_embed_type=past   # past | predict | future
+#   past:    embed(x_past) past tokens → Flatten_Head  (verify teacher capacity with proj_down)
+#   predict: encode(x_past) future tokens → PatchwiseHead  (≈ Chronos2 zero-shot quality)
+#   future:  embed(x_future) teacher-forcing → head  (upper-bound experiment)
+
+proj_down=1               # 0 | 1  (1 = Linear(768→d_model) before head)
+
+head_type=flatten         # flatten | patch_wise
+#   flatten:    Flatten_Head — works for all embed_types
+#   patch_wise: PatchwiseHead — only meaningful for predict / future
 
 python -u run_longExp.py \
   --random_seed $random_seed \

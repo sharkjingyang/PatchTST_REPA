@@ -11,21 +11,26 @@ data_path_name=ETTh1.csv
 data_name=ETTh1
 
 random_seed=2021
-pred_len=336
+pred_len=96
 d_model=128
 e_layers=3
 n_heads=16
 d_ff=256
 
-# Distillation settings
-alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chronos2)
+# Patch settings are auto-derived in backbone: patch_len=16, stride=16, patch_num=seq_len//16
+# (matches Chronos2 native patch grid for past-token alignment)
 
-# Joint distillation hyperparameters (only used when alignment=1)
+alignment=1         # 1 | 0  (1=enable Chronos2 distillation, 0=standalone encoder→head)
+
+# Distillation hyperparameters (only used when alignment=1)
 lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
-lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
+lambda_t2=0.1       # Phase 2: teacher loss weight
 lambda_a=0.5        # Phase 2: alignment loss weight
 align_warmup=5      # epochs of teacher-only warmup before alignment starts
-head_type=flatten   # flatten or patch_wise
+
+head_type=flatten   # flatten | patch_wise
+#   flatten:    recommended (Flatten_Head, global mixing)
+#   patch_wise: PatchwiseHead (requires pred_len % patch_num == 0)
 
 python -u run_longExp.py \
   --random_seed $random_seed \

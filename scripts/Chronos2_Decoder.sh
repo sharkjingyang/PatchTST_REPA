@@ -18,14 +18,17 @@ n_heads=8
 d_ff=256
 
 # Distillation settings
-alignment=1         # 1=enable Chronos2 distillation, 0=standalone mode (no Chronos2)
+alignment=1         # 1 | 0  (1=enable Chronos2 distillation, 0=standalone FutureQueryDecoder)
 
-# Joint distillation hyperparameters (only used when alignment=1)
+# Distillation hyperparameters (only used when alignment=1)
 lambda_t=0.5        # Phase 1 (warmup): teacher loss weight
-lambda_t2=0.1       # Phase 2: teacher loss weight (smaller → slower drift)
+lambda_t2=0.1       # Phase 2: teacher loss weight
 lambda_a=0.5        # Phase 2: alignment loss weight
-align_warmup=5      # epochs of MiniChronos2-only warmup before student MSE starts
-head_type=patch_wise  # patch_wise (recommended) or flatten
+align_warmup=5      # epochs of teacher-only warmup before alignment starts
+
+head_type=patch_wise  # flatten | patch_wise
+#   patch_wise: recommended — FutureQueryDecoder query i aligns with future patch i
+#   flatten:    global mixing, weaker patch-level alignment signal
 
 python -u run_longExp.py \
   --random_seed $random_seed \

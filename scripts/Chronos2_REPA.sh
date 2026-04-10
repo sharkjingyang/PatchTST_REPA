@@ -19,11 +19,15 @@ encoder_depth=3
 lambda_alignment=0.5
 lr=0.0001
 
-# Choose feature extractor: 'tivit', 'mantis' or 'chronos'
-feature_extractor='chronos'
-alignment=1
-alignment_type='patch_wise_cos'
-head_type='flatten'
+feature_extractor='chronos'  # tivit | mantis | chronos
+alignment=1                  # 1 | 0  (0=no alignment loss, pure MSE)
+
+alignment_type='patch_wise_cos'  # mean_pool | patch_wise_cos | patch_wise_mse
+#   mean_pool:      mean-pool all patches → cosine similarity (patch counts can differ)
+#   patch_wise_cos: per-patch cosine similarity (requires patch_num match)
+#   patch_wise_mse: per-patch MSE (stronger direct supervision)
+
+head_type='flatten'  # flatten | patch_wise | quantile
 
 python -u run_longExp.py \
   --random_seed $random_seed \
