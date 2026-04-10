@@ -71,9 +71,9 @@ class Model(nn.Module):
         # RevIN for future mode: normalize with x_past stats (consistent with FutureAlign)
         self.revin_layer = RevIN(self.n_vars, affine=False) if self.embed_type == 'future' else None
 
-        # proj_down: Linear(768 → d_model) bottleneck before head (for embed_type='future' or 'predict')
+        # proj_down: Linear(768 → d_model) bottleneck before head (all embed_types)
         self.proj_down = None
-        if getattr(configs, 'proj_down', 0) and self.embed_type in ('future', 'predict'):
+        if getattr(configs, 'proj_down', 0):
             d_model = configs.d_model
             self.proj_down = nn.Linear(self.chronos_output_dim, d_model)
             head_input_dim = d_model
@@ -110,7 +110,7 @@ class Model(nn.Module):
                 )
         else:  # "past"
             # Flatten_Head on past tokens (num_patches tokens)
-            self.head_nf = self.chronos_output_dim * self.num_patches
+            self.head_nf = head_input_dim * self.num_patches
             self.flatten_head = Flatten_Head(
                 individual=individual,
                 n_vars=self.n_vars,
@@ -198,7 +198,11 @@ class Model(nn.Module):
 
             embeddings = torch.stack(embeddings_list, dim=0).to(self.device)
             embeddings = embeddings[:, :, :self.num_patches, :]  # (bs, nvars, num_patches, 768)
-            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, 768, num_patches)
+
+            if self.proj_down is not None:
+                embeddings = self.proj_down(embeddings)  # (bs, nvars, num_patches, d_model)
+
+            embeddings_perm = embeddings.permute(0, 1, 3, 2)  # (bs, nvars, d_model/768, num_patches)
 
             output = self.flatten_head(embeddings_perm)  # (bs, nvars, pred_len)
 

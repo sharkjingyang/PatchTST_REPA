@@ -13,15 +13,13 @@ class PatchTST_FutureAlign_backbone(nn.Module):
 
     Architecture:
         - Student path: x_past → RevIN → patch → TSTiEncoder → Head → RevIN denorm
-        - Teacher path: z_chron (from Chronos2) → proj_down → Head → denorm with x_future loc/scale
-          (training only; uses Chronos2.embed(x_future) loc/scale for self-consistent denorm)
-        - head_type: 'flatten' (Flatten_Head) or 'patch_wise' (PatchwiseHead)
-          Both student and teacher use the same head type.
+        - Teacher path: z_chron (Chronos2.embed past tokens) → proj_down → Head → denorm with x_past loc/scale
+        - head_type: 'flatten' (Flatten_Head) recommended; 'patch_wise' requires pred_len % patch_num == 0
 
-    Patch auto-derivation:
-        output_patch_num = pred_len // 16  (Chronos2 patch_size = 16)
-        patch_len = seq_len // output_patch_num
-        stride = patch_len  (no overlap, patch_num == output_patch_num)
+    Patch settings (fixed to Chronos2 native):
+        patch_len = 16
+        stride    = 16  (no overlap)
+        patch_num = seq_len // 16  (e.g., 336//16=21, matches Chronos2 past token count)
     """
 
     def __init__(self, c_in: int, context_window: int, target_window: int,
@@ -41,22 +39,13 @@ class PatchTST_FutureAlign_backbone(nn.Module):
                  max_seq_len: int = 1024, verbose: bool = False, **kwargs):
         super().__init__()
 
-        # Chronos2 patch size is fixed at 16
-        chronos_patch_size = 16
-        assert target_window % chronos_patch_size == 0, (
-            f"pred_len must be divisible by {chronos_patch_size} (Chronos2 patch size), "
-            f"got pred_len={target_window}"
+        # Patch settings fixed to Chronos2 native patch_size=16
+        patch_len = 16
+        stride = 16
+        assert context_window % patch_len == 0, (
+            f"seq_len ({context_window}) must be divisible by 16 (Chronos2 patch size)"
         )
-        self.output_patch_num = target_window // chronos_patch_size
-
-        assert context_window % self.output_patch_num == 0, (
-            f"seq_len ({context_window}) must be divisible by output_patch_num "
-            f"({self.output_patch_num}). "
-            f"Try seq_len=336 with pred_len=96 (output_patch_num=6, patch_len=56)."
-        )
-        patch_len = context_window // self.output_patch_num
-        stride = patch_len  # no overlap → patch_num == output_patch_num
-        patch_num = self.output_patch_num
+        patch_num = context_window // patch_len  # e.g., 336//16=21
 
         self.patch_len = patch_len
         self.stride = stride
@@ -64,7 +53,7 @@ class PatchTST_FutureAlign_backbone(nn.Module):
         self.d_model = d_model
         self.n_vars = c_in
 
-        # RevIN — shared stats between student and teacher paths
+        # RevIN
         self.revin = revin
         if revin:
             self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
@@ -80,7 +69,7 @@ class PatchTST_FutureAlign_backbone(nn.Module):
             attn_mask=attn_mask, res_attention=res_attention,
             pre_norm=pre_norm, store_attn=store_attn,
             pe=pe, learn_pe=learn_pe,
-            encoder_depth=n_layers,  # use all layers; no intermediate needed
+            encoder_depth=n_layers,
             verbose=verbose, **kwargs
         )
 
@@ -91,11 +80,15 @@ class PatchTST_FutureAlign_backbone(nn.Module):
 
         def _build_head():
             if head_type == 'patch_wise':
+                assert target_window % patch_num == 0, (
+                    f"pred_len ({target_window}) must be divisible by patch_num ({patch_num}) "
+                    f"for patch_wise head"
+                )
                 return PatchwiseHead(
                     n_vars=c_in,
                     d_model=d_model,
                     output_patch_num=patch_num,
-                    output_patch_size=16,
+                    output_patch_size=target_window // patch_num,
                     dropout=head_dropout
                 )
             else:  # flatten
@@ -122,19 +115,18 @@ class PatchTST_FutureAlign_backbone(nn.Module):
             pred:  (bs, nvars, pred_len)  — denormalized prediction
             z_enc: (bs, nvars, patch_num, d_model)  — for alignment loss
         """
-        # RevIN norm (stores loc/scale internally for denorm)
+        # RevIN norm
         if self.revin:
             x = x.permute(0, 2, 1)
             x = self.revin_layer(x, 'norm')
             x = x.permute(0, 2, 1)
 
-        # Patching — no padding needed (seq_len exactly divisible)
+        # Patching: (bs, nvars, seq_len) → (bs, nvars, patch_num, patch_len)
         z = x.unfold(dimension=-1, size=self.patch_len, step=self.stride)
         z = z.permute(0, 1, 3, 2)  # (bs, nvars, patch_len, patch_num)
 
-        # Encode
+        # Encode → (bs, nvars, d_model, patch_num)
         z, _ = self.backbone(z, return_intermediate=False)
-        # z: (bs, nvars, d_model, patch_num)
 
         # Save for alignment loss: (bs, nvars, patch_num, d_model)
         z_enc = z.permute(0, 1, 3, 2)
@@ -156,24 +148,24 @@ class PatchTST_FutureAlign_backbone(nn.Module):
     def forward_teacher(self, z_chron, loc=None, scale=None):
         """
         Args:
-            z_chron: (bs, nvars, output_patch_num, 768)  — Chronos2 future embeddings
-            loc:     (bs, nvars)  — x_past mean from Chronos2.model.encode
-            scale:   (bs, nvars)  — x_past std  from Chronos2.model.encode
-                     If None, falls back to RevIN stats from forward_student (x_past stats).
+            z_chron: (bs, nvars, patch_num, 768)  — Chronos2 past token embeddings
+            loc:     (bs, nvars)  — x_past mean from Chronos2.embed
+            scale:   (bs, nvars)  — x_past std  from Chronos2.embed
+                     If None, falls back to RevIN stats from forward_student.
         Returns:
             pred:      (bs, nvars, pred_len)
-            z_teacher: (bs, nvars, output_patch_num, d_model)  — for alignment loss
+            z_teacher: (bs, nvars, patch_num, d_model)  — for alignment loss
         """
         # proj_down: 768 → d_model
-        z_teacher = self.proj_down(z_chron)  # (bs, nvars, P, d_model)
+        z_teacher = self.proj_down(z_chron)  # (bs, nvars, patch_num, d_model)
 
-        # Reshape for head: (bs, nvars, d_model, P)
+        # Reshape for head: (bs, nvars, d_model, patch_num)
         z_perm = z_teacher.permute(0, 1, 3, 2)
 
-        # Teacher head (independent from student head)
+        # Teacher head
         pred = self.teacher_head(z_perm)  # (bs, nvars, pred_len)
 
-        # Denorm: use x_future loc/scale if provided, else fall back to RevIN(x_past)
+        # Denorm
         if loc is not None and scale is not None:
             pred = pred * scale.unsqueeze(-1) + loc.unsqueeze(-1)
         elif self.revin:

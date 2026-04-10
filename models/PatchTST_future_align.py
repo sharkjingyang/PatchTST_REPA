@@ -15,22 +15,25 @@ from layers.PatchTST_FutureAlign_backbone import PatchTST_FutureAlign_backbone
 class Model(nn.Module):
     """Joint Distillation Training model (PatchTST_future_align).
 
-    Two modes controlled by --contrastive:
-    - Distillation mode (contrastive=1): loads Chronos2 teacher for alignment
-    - Standalone mode (contrastive=0): pure encoder → head, no Chronos2 needed
+    Two modes controlled by --alignment:
+    - Distillation mode (alignment=1): loads Chronos2 teacher for alignment
+    - Standalone mode (alignment=0): pure encoder → head, no Chronos2 needed
 
     Training (distillation mode):
         Path A (Teacher):
-            x_future → Chronos2 (frozen) → z_chron
-                     → proj_down (768→d_model, trainable)
-                     → z_teacher → Head → pred_teacher
+            x_past → Chronos2.embed (frozen) → past tokens (patch_num, 768)
+                   → proj_down (768→d_model, trainable)
+                   → z_teacher → teacher_head → pred_teacher
 
         Path B (Student):
-            x_past → Encoder (trainable) → z_enc → Head → pred_student
+            x_past → Encoder (trainable) → z_enc → head → pred_student
 
         Loss = MSE(pred_student, y)                         # Loss①
              + λ_t * MSE(pred_teacher, y)                   # Loss②
-             + λ_a * MSE(z_enc, z_teacher.detach())         # Loss③
+             + λ_a * align(z_enc, z_teacher.detach())       # Loss③
+
+    Patch settings: patch_len=16, stride=16, patch_num=seq_len//16
+    Both student and teacher operate on the same patch grid as Chronos2 past tokens.
 
     Inference: only Path B — Chronos2 not needed.
     """
@@ -42,11 +45,10 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
         self.device_str = getattr(configs, 'device', 'cuda:0')
 
-        # Number of future patches
-        self.num_output_patches = configs.pred_len // 16
+        # Number of past patches (matches Chronos2 past token count)
+        self.num_past_patches = configs.seq_len // 16
 
         # Check if we need teacher path (distillation mode)
-        # Use --alignment to control: 1=enable distillation (load Chronos2), 0=standalone mode
         user_alignment = getattr(configs, 'alignment', None)
         self.use_teacher = 0 if user_alignment is not None and user_alignment == 0 else 1
 
@@ -68,7 +70,7 @@ class Model(nn.Module):
         else:
             self.chronos = None
 
-        # ---- Backbone (encoder + proj_down + shared head) ----
+        # ---- Backbone (encoder + proj_down + head) ----
         self.backbone = PatchTST_FutureAlign_backbone(
             c_in=configs.enc_in,
             context_window=configs.seq_len,
@@ -89,20 +91,20 @@ class Model(nn.Module):
     def forward(self, x_past, x_future=None):
         """
         Args:
-            x_past:   (bs, seq_len,  nvars)
+            x_past:   (bs, seq_len, nvars)
             x_future: unused, kept for API compatibility
 
         Returns (training, use_teacher=True):
             pred_student: (bs, pred_len, nvars)
             pred_teacher: (bs, pred_len, nvars)
-            z_enc:        (bs, nvars, output_patch_num, d_model)
-            z_teacher:    (bs, nvars, output_patch_num, d_model)
+            z_enc:        (bs, nvars, patch_num, d_model)
+            z_teacher:    (bs, nvars, patch_num, d_model)
 
         Returns (inference / use_teacher=False):
             pred_student: (bs, pred_len, nvars)
 
-        Teacher signal: Chronos2.model.encode(x_past, num_output_patches) future tokens.
-        No x_future needed — train/inference consistent, both only see x_past.
+        Teacher signal: Chronos2.embed(x_past) past tokens — same patch grid as student.
+        Both student and teacher only use x_past; no train/inference gap.
         """
         bs, seq_len, nvars = x_past.shape
         # (bs, seq_len, nvars) → (bs, nvars, seq_len)
@@ -113,21 +115,19 @@ class Model(nn.Module):
         pred_student = pred_s.permute(0, 2, 1)  # (bs, pred_len, nvars)
 
         if self.use_teacher and self.training:
-            # Teacher path: Chronos2.model.encode(x_past) → future tokens
-            # x_past only — no ground-truth future needed, consistent with inference
-            x_flat = x_perm.reshape(bs * nvars, seq_len).float()
+            # Teacher path: Chronos2.embed(x_past) → past tokens
+            # x_perm: (bs, nvars, seq_len) — embed() accepts 3D (batch, n_variates, history)
+            embeddings_list, loc_scales = self.chronos.embed(x_perm.cpu())
+            # embeddings_list: list of (nvars, num_past+2, 768), length=bs
+            # Take only past tokens (exclude REG token and masked future token at the end)
+            z_chron = torch.stack(
+                [emb[:, :self.num_past_patches, :] for emb in embeddings_list], dim=0
+            ).to(x_past.device)
+            # z_chron: (bs, nvars, num_past_patches, 768)
 
-            encoder_out, loc_scale, _, _ = self.chronos.model.encode(
-                context=x_flat.to(self.chronos.model.device),
-                num_output_patches=self.num_output_patches,
-            )
-            # last num_output_patches tokens: (bs*nvars, num_output_patches, 768)
-            future_hidden = encoder_out.last_hidden_state[:, -self.num_output_patches:, :]
-            z_chron = future_hidden.reshape(bs, nvars, self.num_output_patches, 768).to(x_past.device)
-
-            # loc/scale from Chronos2 encode (x_past stats, consistent with student RevIN)
-            loc   = loc_scale[0].reshape(bs, nvars).to(x_past.device)
-            scale = loc_scale[1].reshape(bs, nvars).to(x_past.device)
+            # loc/scale from Chronos2 embed (x_past mean/std, consistent with student RevIN)
+            loc   = torch.stack([ls[0] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)
+            scale = torch.stack([ls[1] for ls in loc_scales], dim=0).squeeze(-1).to(x_past.device)
 
             pred_t, z_teacher = self.backbone.forward_teacher(z_chron, loc=loc, scale=scale)
             pred_teacher = pred_t.permute(0, 2, 1)  # (bs, pred_len, nvars)
