@@ -36,8 +36,10 @@ python -u run_longExp.py --is_training 1 --model PatchTST_REPA --data custom \
   --feature_extractor chronos --lambda_alignment 0.1 \
   --alignment_type patch_wise_cos
 
-# PatchTST_future_align (encoder + optional Chronos2 future distillation)
-# patch_len 自动推导；--alignment 0 时退化为普通 encoder → head（不加载 Chronos2）
+# PatchTST_future_align (encoder + optional Chronos2 past-token distillation)
+# patch_len=16 固定（Chronos2 native），patch_num=seq_len//16=21
+# teacher 对齐 chronos.embed(x_past) past tokens，语义空间与 student z_enc 一致
+# --alignment 0 时退化为普通 encoder → head（不加载 Chronos2）
 
 # Distillation mode (with Chronos2 teacher)
 python -u run_longExp.py --is_training 1 --model PatchTST_future_align --data custom \
@@ -101,7 +103,7 @@ sh ./scripts/mantis.sh               # PatchTST_REPA + Mantis
 sh ./scripts/Chronos2_REPA.sh        # PatchTST_REPA + Chronos (patch_wise_cos)
 sh ./scripts/Chronos2_FutureAlign.sh  # PatchTST_future_align (joint distillation)
 sh ./scripts/Chronos2_Decoder.sh      # PatchTST_decoder (FutureQueryDecoder)
-sh ./scripts/Chronos2_featureHead.sh  # Chronos2_head (future + proj_down)
+sh ./scripts/Chronos2_featureHead.sh  # Chronos2_head (past + proj_down，验证 teacher 学习能力)
 sh ./scripts/Chronos2_zeroshot.sh    # Chronos2 direct inference (no training)
 sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no training)
 ```
@@ -111,13 +113,13 @@ sh ./scripts/PatchTST_FM_zeroshot.sh # PatchTST-FM-R1 zero-shot inference (no tr
 ### Five Models
 1. `PatchTST` - Original PatchTST (baseline)
 2. `PatchTST_REPA` - PatchTST + Linear Projector + contrastive loss (外部 FM 对齐)
-3. `PatchTST_future_align` - Joint distillation: student encoder + optional Chronos2 future teacher (λ=0 → no Chronos2)
+3. `PatchTST_future_align` - Joint distillation: student encoder + optional Chronos2 past-token teacher（patch_len=16 固定，past↔past 对齐）
 4. `PatchTST_decoder` - FutureQueryDecoder + Chronos2 distillation（encoder → cross-attn decoder → PatchwiseHead）
 5. `Chronos2_head` - Chronos2 (frozen) + prediction head
 
 ### PatchTST_decoder Architecture
 
-**动机**：`PatchTST_future_align` 直接对齐 `z_enc`（past-oriented）与 `z_teacher`（future-oriented），表示空间 gap 大。`PatchTST_decoder` 在 encoder 和 head 之间插入 **FutureQueryDecoder**（cross-attention），由 `output_patch_num` 个可学习 query 从过去 encoder token 中查询未来信息，生成 `z_future`（future-oriented）。
+**动机**：`PatchTST_future_align` 对齐 `z_enc`（past-oriented）与 Chronos2 past tokens（past-oriented），表示空间一致但局限于过去信息。`PatchTST_decoder` 在 encoder 和 head 之间插入 **FutureQueryDecoder**（cross-attention），由 `output_patch_num` 个可学习 query 从过去 encoder token 中查询未来信息，生成 `z_future`（future-oriented），再与 Chronos2 future tokens 对齐。
 
 **两种模式**（由 `--alignment` 控制）：
 - **Distillation 模式**（`--alignment 1`）：加载 Chronos2 作为 teacher，对齐 `z_future ↔ z_teacher`
@@ -163,29 +165,31 @@ patch_num = seq_len // 16           (e.g., 336//16=21)
 
 Chronos2_head uses a frozen Chronos2 encoder to extract features, then a trainable prediction head. **All outputs are denormalized back to original scale** using InstanceNorm inverse (same as Chronos2's native forward pass).
 
-| embed_type | Features | Head | Trainable Params |
+| embed_type | Features | Head | Trainable Params (no proj_down) |
 |------------|----------|------|------------------|
-| `past`    | Past tokens (21 patches) | Flatten_Head | ~1.55M (pred_len=96) / ~11.6M (pred_len=720), linear in pred_len |
+| `past`    | Past tokens (21 patches) | Flatten_Head | ~1.55M (pred_len=96) / ~11.6M (pred_len=720) |
 | `predict` | Future tokens only (6 patches) | PatchwiseHead | ~314K (fixed, independent of pred_len) |
 | `future`  | Ground-truth future tokens (6 patches, teacher-forcing) | Flatten_Head or PatchwiseHead | depends on head_type and proj_down |
 
-`future` 模式新增 `--proj_down 1` 选项：在 head 前插入 `Linear(768→d_model)` 瓶颈层，用于验证压缩后表示是否仍能保留预测能力（teacher path 验证实验）。
+`--proj_down 1` 对所有 embed_type 均可用，在 head 前插入 `Linear(768→d_model)` 瓶颈层。
 
-| future + proj_down | pred_len=96 | pred_len=720 |
-|---|---|---|
-| proj_down (768→128) | 98K | 98K |
-| Flatten_Head (128×6→96) | 73K | 4.15M |
-| **TOTAL** | **~172K** | **~4.25M** |
+| embed_type + proj_down | pred_len | proj_down | Head | TOTAL |
+|---|---|---|---|---|
+| past | 96 | 98K | Flatten_Head(128×21→96) ~258K | **~356K** |
+| past | 720 | 98K | Flatten_Head(128×21→720) ~1.94M | **~2.04M** |
+| future | 96 | 98K | Flatten_Head(128×6→96) ~73K | **~172K** |
+| future | 720 | 98K | Flatten_Head(128×6→720) ~4.15M | **~4.25M** |
 
-Flatten_Head 参数随 pred_len 二次增长（input_dim ∝ pred_len，output_dim = pred_len），pred_len 大时建议用 PatchwiseHead。
+`past + proj_down` 用于验证 teacher path 学习能力（与 FutureAlign teacher 结构完全一致）。
 
 **Flow (embed_type="past")**:
 ```
 Input x: (bs, seq_len, nvars)
   ↓ Chronos2.embed(x) - frozen
 Feature: (bs, nvars, 21, 768)  [21 = seq_len/patch_len]
-  ↓ permute(0,1,3,2): (bs, nvars, 768, 21)
-  ↓ Flatten_Head → flatten: (bs*nvars, 768*21) → linear: (bs*nvars, pred_len)
+  ↓ [optional] proj_down: Linear(768→d_model) if --proj_down 1
+  ↓ permute(0,1,3,2): (bs, nvars, d_model/768, 21)
+  ↓ Flatten_Head → flatten: (bs*nvars, dim*21) → linear: (bs*nvars, pred_len)
   ↓ InstanceNorm.inverse (loc, scale from embed)
 Output: (bs, pred_len, nvars) - denormalized
 ```
@@ -300,7 +304,7 @@ PatchTST_backbone.forward (use_chronos_norm=True):
 - **`PatchTST_Decoder_backbone`**: encoder + FutureQueryDecoder + proj_down + head/teacher_head，提供 `forward_student` / `forward_teacher` 接口
 
 **`layers/PatchTST_FutureAlign_backbone.py`**：
-- **`PatchTST_FutureAlign_backbone`**: encoder → 直接 head（无 cross-attention decoder），提供相同接口
+- **`PatchTST_FutureAlign_backbone`**: encoder → 直接 head（无 cross-attention decoder），patch 设置固定为 patch_len=16, stride=16, patch_num=seq_len//16（与 Chronos2 past token 数量一致）
 
 ### alignment_mlp 规范（PatchTST_REPA）
 
@@ -368,7 +372,7 @@ handle.remove()
 | `feature_extractor` | REPA only: tivit / mantis / chronos | mantis |
 | `head_type` | flatten / patch_wise / quantile | flatten |
 | `chronos_embed_type` | Chronos2_head: past / predict / future | past |
-| `proj_down` | Chronos2_head (future mode): 1=add Linear(768→d_model) before head | 0 |
+| `proj_down` | Chronos2_head: 1=add Linear(768→d_model) before head（所有 embed_type 均可用） | 0 |
 | `use_chronos_norm` | 用 ChronosInstanceNorm(arcsinh=True) 替换 RevIN，任意模型可用；PatchTST_REPA+chronos 做对比实验时推荐开启 | 0 |
 | `lambda_t` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 1 warmup) | 0.5 |
 | `lambda_t2` | future_align/decoder: 教师路径预测损失权重 (Loss②, Phase 2) | 0.1 |
@@ -384,7 +388,7 @@ handle.remove()
 |-------|---------|----------------|
 | PatchTST (patch_len=16, stride=8) | encoder + Flatten_Head | ~921K |
 | PatchTST_REPA | encoder + alignment_mlp(98K) + Flatten_Head | ~510K |
-| PatchTST_future_align | encoder + proj_down(98K) + head + teacher_head | ~400K |
+| PatchTST_future_align (pred_len=96) | encoder + proj_down(98K) + head + teacher_head | ~887K |
 | PatchTST_decoder | encoder + FutureQueryDecoder(133K) + proj_down(98K) + head + teacher_head | ~525K |
 
 ### PatchTST_decoder 参数规模 (d_model=128, n_heads=8, d_ff=256, seq_len=336, pred_len=96)
@@ -403,24 +407,28 @@ patch 设置：patch_len=16, stride=16 → patch_num=21 (336//16)，output_patch
 
 ### PatchTST_future_align 参数规模 (d_model=128, seq_len=336, pred_len=96)
 
+patch 设置：patch_len=16, stride=16 → patch_num=21 (336//16)，与 Chronos2 past token 一致
+
 | Module | Params |
 |--------|-------:|
 | TSTiEncoder (e_layers=3) | ~273K |
 | proj_down (768→128) | 98,304 |
-| Student Head (Flatten_Head) | ~73K |
-| Teacher Head (Flatten_Head) | ~73K |
+| Student Head (Flatten_Head 128×21→96) | ~258K |
+| Teacher Head (Flatten_Head 128×21→96) | ~258K |
 | RevIN | 14 |
-| **TOTAL** | **~518K** |
+| **TOTAL** | **~887K** |
 
 ### Chronos2_head 参数规模
 
-| embed_type | pred_len | 说明 | TOTAL |
-|---|---|---|---|
-| past | 96 | Flatten_Head(768×21→96) | ~1.55M |
-| past | 720 | Flatten_Head(768×21→720) | ~11.6M |
-| predict | any | PatchwiseHead，固定 | ~314K |
-| future + proj_down | 96 | Linear(768→128) + Flatten_Head(128×6→96) | ~172K |
-| future + proj_down | 720 | Linear(768→128) + Flatten_Head(128×45→720) | ~4.25M |
+| embed_type | proj_down | pred_len | 说明 | TOTAL |
+|---|---|---|---|---|
+| past | 0 | 96 | Flatten_Head(768×21→96) | ~1.55M |
+| past | 0 | 720 | Flatten_Head(768×21→720) | ~11.6M |
+| past | 1 | 96 | Linear(768→128) + Flatten_Head(128×21→96) | **~356K** |
+| past | 1 | 720 | Linear(768→128) + Flatten_Head(128×21→720) | **~2.04M** |
+| predict | - | any | PatchwiseHead，固定 | ~314K |
+| future | 1 | 96 | Linear(768→128) + Flatten_Head(128×6→96) | ~172K |
+| future | 1 | 720 | Linear(768→128) + Flatten_Head(128×6→720) | ~4.25M |
 
 ## Latent Space Quality Evaluation
 
@@ -466,9 +474,9 @@ LatentTSF（ICML，arXiv:2602.00297）提出了 **Latent Chaos** 概念：MSE �
 | Path | Denorm 使用的统计量 | 原因 |
 |------|-------------------|------|
 | Student path | RevIN(x_past) loc/scale | 推理时无法获得 x_future，必须用 past |
-| Teacher path (distillation mode) | Chronos2.embed(x_future) 返回的 loc/scale | 与 Chronos2 内部归一化自洽，Loss② 收敛快 |
+| Teacher path (distillation mode) | Chronos2.embed(x_past) 返回的 loc/scale | x_past mean/std，与 student RevIN 统计量一致，linear denorm 自洽 |
 
-**关键点**：如果 teacher path 也用 RevIN(x_past) 做 denorm，则 teacher 在有趋势的序列上会遇到 per-sample scale mismatch（future 和 past 的均值不同），导致 Loss② 收敛显著变慢。
+**关键点**：teacher 和 student 使用相同的 x_past 统计量做 denorm，两路预测在同一尺度下被 Loss② 监督，不存在 past/future 均值 mismatch。
 
 ### Alignment Loss（Loss③，两个模型相同）
 
@@ -494,8 +502,10 @@ loss_align = loss_cosine + loss_mse_align
 | 对比项 | PatchTST_future_align | PatchTST_decoder |
 |--------|----------------------|-----------------|
 | 对齐 student 端 | z_enc（encoder 直接输出，past-oriented） | z_future（FutureQueryDecoder 输出，future-oriented） |
-| 对齐 gap | 大（past ↔ future） | 小（future ↔ future） |
-| 推荐 head_type | flatten（全局混合更优） | patch_wise（局部对齐语义成立） |
+| 对齐 teacher 端 | embed(x_past) past tokens（past-oriented） | encode(x_past) future tokens（future-oriented） |
+| 对齐 gap | 小（past ↔ past，语义一致） | 小（future ↔ future，语义一致） |
+| 对齐空间含义 | 学习更好的过去特征表示 | 学习更好的未来预测表示 |
+| 推荐 head_type | flatten（全局混合） | patch_wise（局部对齐语义成立） |
 | 额外参数 | 无 | FutureQueryDecoder ~133K |
 | `--alignment 0` | 纯 encoder → head（不加载 Chronos2） | 纯 encoder + decoder → head（不加载 Chronos2） |
 
