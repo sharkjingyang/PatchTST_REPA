@@ -428,11 +428,12 @@ class Exp_Main(Exp_Basic):
         for epoch in range(self.args.train_epochs):
             # Transition: Phase 1 → Phase 2, freeze teacher and rebuild scheduler
             if _use_teacher_warmup and epoch == _align_warmup:
-                # Freeze proj_down + teacher_head so only student trains in Phase 2
+                # Freeze proj_down + teacher_head; copy teacher_head → student head
                 bb = self.model.backbone
                 for param in list(bb.proj_down.parameters()) + list(bb.teacher_head.parameters()):
                     param.requires_grad_(False)
-                print(f"[Phase 2] Teacher frozen. Rebuilding scheduler for remaining {self.args.train_epochs - _align_warmup} epochs.")
+                bb.head.load_state_dict(bb.teacher_head.state_dict())
+                print(f"[Phase 2] Teacher frozen, teacher_head copied → student head. Rebuilding scheduler for remaining {self.args.train_epochs - _align_warmup} epochs.")
                 remaining_epochs = self.args.train_epochs - _align_warmup
                 scheduler = lr_scheduler.OneCycleLR(optimizer = model_optim,
                                                     steps_per_epoch = train_steps,
@@ -530,7 +531,7 @@ class Exp_Main(Exp_Basic):
                                 loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
                                 loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
                                 loss_align = loss_cosine + loss_mse_align
-                                loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
+                                loss = lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
                             pred_student = self.model(batch_x)
