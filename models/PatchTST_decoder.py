@@ -86,6 +86,12 @@ class Model(nn.Module):
             head_type=getattr(configs, 'head_type', 'patch_wise'),
         )
 
+    def train(self, mode=True):
+        super().train(mode)
+        if self.use_teacher and self.chronos is not None:
+            self.chronos.model.eval()
+        return self
+
     def forward(self, x_past: torch.Tensor):
         """
         Args:
