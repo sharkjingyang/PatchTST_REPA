@@ -248,7 +248,7 @@ x: (B*C, T)
 
 **两个关键接口**：
 - `model.encode(context, num_output_patches)`: 返回 encoder 全部 hidden states `[past | REG | future]`，shape `(B*C, num_past+1+num_output, d_model)`
-- `pipeline.embed(inputs)`: 内部调用 `model.encode`（num_output_patches=0），每个时序返回 shape `(n_variates, num_patches+2, d_model)`，+2 为 REG token + 1 masked output patch token（**非 CLS/SEP**）
+- `pipeline.embed(inputs)`: 内部调用 `model.encode`（num_output_patches=1），每个时序返回 shape `(n_variates, num_patches+2, d_model)`，+2 为 REG token + 1 masked output patch token（**非 CLS/SEP**）
 
 ### Chronos2 Feature Extraction in REPA Models
 
