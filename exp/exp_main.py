@@ -403,43 +403,13 @@ class Exp_Main(Exp_Basic):
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
 
-        # Determine if we need warmup phase with fixed LR
-        _align_warmup = getattr(self.args, 'align_warmup_epochs', 5)
-        _lambda_t = getattr(self.args, 'lambda_t', 0.5)
-        _lambda_a = getattr(self.args, 'lambda_a', 0.5)
-        _alignment_flag = getattr(self.args, 'alignment', None)
-        _use_teacher_warmup = (
-            self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']
-            and (_lambda_t > 0 or _lambda_a > 0)
-            and _alignment_flag != 0
-        )
-        if _use_teacher_warmup:
-            # Phase 1: fixed LR (= learning_rate), no scheduler — scheduler created at Phase 2 start
-            scheduler = None
-            for pg in model_optim.param_groups:
-                pg['lr'] = self.args.learning_rate
-        else:
-            scheduler = lr_scheduler.OneCycleLR(optimizer = model_optim,
-                                                steps_per_epoch = train_steps,
-                                                pct_start = self.args.pct_start,
-                                                epochs = self.args.train_epochs,
-                                                max_lr = self.args.learning_rate)
+        scheduler = lr_scheduler.OneCycleLR(optimizer = model_optim,
+                                            steps_per_epoch = train_steps,
+                                            pct_start = self.args.pct_start,
+                                            epochs = self.args.train_epochs,
+                                            max_lr = self.args.learning_rate)
 
         for epoch in range(self.args.train_epochs):
-            # Transition: Phase 1 → Phase 2, freeze teacher and rebuild scheduler
-            if _use_teacher_warmup and epoch == _align_warmup:
-                # Freeze proj_down + teacher_head; copy teacher_head → student head
-                bb = self.model.backbone
-                for param in list(bb.proj_down.parameters()) + list(bb.teacher_head.parameters()):
-                    param.requires_grad_(False)
-                bb.head.load_state_dict(bb.teacher_head.state_dict())
-                print(f"[Phase 2] Teacher frozen, teacher_head copied → student head. Rebuilding scheduler for remaining {self.args.train_epochs - _align_warmup} epochs.")
-                remaining_epochs = self.args.train_epochs - _align_warmup
-                scheduler = lr_scheduler.OneCycleLR(optimizer = model_optim,
-                                                    steps_per_epoch = train_steps,
-                                                    pct_start = self.args.pct_start,
-                                                    epochs = remaining_epochs,
-                                                    max_lr = self.args.learning_rate)
             iter_count = 0
             train_loss = []
             train_mse_loss = []
@@ -531,7 +501,7 @@ class Exp_Main(Exp_Basic):
                                 loss_cosine = -(z_stu_n * z_tea_n).sum(dim=-1).mean()
                                 loss_mse_align = F.mse_loss(z_student, z_teacher.detach())
                                 loss_align = loss_cosine + loss_mse_align
-                                loss = lambda_a * loss_align
+                                loss = mse_loss + lambda_t2 * loss_teacher + lambda_a * loss_align
                         else:
                             # Ablation: student only, no teacher path
                             pred_student = self.model(batch_x)
@@ -640,7 +610,7 @@ class Exp_Main(Exp_Basic):
                     loss.backward()
                     model_optim.step()
                     
-                if self.args.lradj == 'TST' and scheduler is not None:
+                if self.args.lradj == 'TST':
                     adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args, printout=False)
                     scheduler.step()
 
@@ -662,7 +632,7 @@ class Exp_Main(Exp_Basic):
                 best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
 
             # Get current learning rate
-            current_lr = (scheduler.get_last_lr()[0] if scheduler is not None else model_optim.param_groups[0]['lr']) if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
+            current_lr = scheduler.get_last_lr()[0] if self.args.lradj == 'TST' else model_optim.param_groups[0]['lr']
 
             best_suffix = ' ***' if is_best_update else ''
             if self.args.model in ['PatchTST_future_align', 'PatchTST_decoder']:
@@ -690,7 +660,7 @@ class Exp_Main(Exp_Basic):
             else:
                 no_improve_count = 0
 
-            if self.args.lradj != 'TST' and scheduler is not None:
+            if self.args.lradj != 'TST':
                 adjust_learning_rate(model_optim, scheduler, epoch + 1, self.args)
 
         # Load best model for test

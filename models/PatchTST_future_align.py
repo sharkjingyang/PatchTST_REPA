@@ -88,13 +88,6 @@ class Model(nn.Module):
             head_type=getattr(configs, 'head_type', 'flatten'),
         )
 
-    def train(self, mode=True):
-        super().train(mode)
-        # Keep Chronos2 always in eval mode regardless of model train/eval state
-        if self.use_teacher and self.chronos is not None:
-            self.chronos.model.eval()
-        return self
-
     def forward(self, x_past, x_future=None):
         """
         Args:
