@@ -644,7 +644,7 @@ class Exp_Main(Exp_Basic):
                     phase = "warmup" if epoch < align_warmup else "align"
                     extra_str = " | [{}] Teacher: {:.5f} | Align: {:.5f} (cos={:.4f} mse={:.4f})".format(
                         phase, train_teacher_loss, train_alignment_loss, train_cosine_loss, train_mse_align_loss)
-            elif train_alignment_loss > 1e-8:
+            elif abs(train_alignment_loss) > 1e-8:
                 extra_str = " | Align: {:.5f}".format(train_alignment_loss)
             else:
                 extra_str = ""
